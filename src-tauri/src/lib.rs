@@ -90,9 +90,6 @@ fn monitor_system_power_events(app: AppHandle) {
     use windows::core::PCWSTR;
     use std::sync::atomic::{AtomicPtr, Ordering};
 
-    const PBT_APMRESUMEAUTOMATIC: u32 = 18;
-    const PBT_APMRESUMESUSPEND: u32 = 7;
-
     // Store app handle in a static for the window proc
     static APP_HANDLE: AtomicPtr<AppHandle> = AtomicPtr::new(std::ptr::null_mut());
 
@@ -102,17 +99,29 @@ fn monitor_system_power_events(app: AppHandle) {
         wparam: windows::Win32::Foundation::WPARAM,
         lparam: windows::Win32::Foundation::LPARAM,
     ) -> windows::Win32::Foundation::LRESULT {
+        const WM_POWERBROADCAST: u32 = 0x0218;
+        const PBT_APMRESUMEAUTOMATIC: u32 = 18;
+        const PBT_APMRESUMESUSPEND: u32 = 7;
+        const PBT_POWERSETTINGCHANGE: u32 = 0x8013;
+
         if msg == WM_POWERBROADCAST {
             let event = wparam.0 as u32;
-            // PBT_APMRESUMEAUTOMATIC = 18, PBT_APMRESUMESUSPEND = 7
-            if event == 18 || event == 7 {
-                // System resumed from sleep - emit event after a short delay
+
+            // Handle both regular resume events AND display power events
+            if event == PBT_APMRESUMEAUTOMATIC || event == PBT_APMRESUMESUSPEND || event == PBT_POWERSETTINGCHANGE {
+                // System resumed from sleep or display turned on - emit event after a delay
                 let app_ptr = APP_HANDLE.load(Ordering::SeqCst);
                 if !app_ptr.is_null() {
                     let app = &*app_ptr;
-                    // Wait a bit for displays to come back online
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    let _ = app.emit("system-wake-from-sleep", ());
+
+                    // Spawn thread to avoid blocking the message pump
+                    let app_clone = app.clone();
+                    std::thread::spawn(move || {
+                        // Wait for displays to come back online
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        let _ = app_clone.emit("system-wake-from-sleep", ());
+                        println!("[Desktop Guardian] Wake from sleep detected!");
+                    });
                 }
             }
         }
