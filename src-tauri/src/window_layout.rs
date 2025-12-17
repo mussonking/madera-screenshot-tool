@@ -243,7 +243,6 @@ pub fn get_all_windows() -> Vec<WindowPosition> {
 
             if GetWindowPlacement(hwnd, &mut placement).is_ok() {
                 // SW_SHOWMAXIMIZED = 3, SW_SHOWMINIMIZED = 2
-                let is_maximized = placement.showCmd == 3;
                 let is_minimized = placement.showCmd == 2;
 
                 // For position/size, use different sources depending on window state:
@@ -267,6 +266,32 @@ pub fn get_all_windows() -> Vec<WindowPosition> {
                 let height = rect.bottom - rect.top;
 
                 let monitor_index = get_monitor_for_position(x, y, monitors);
+
+                // Detect if window is ACTUALLY maximized by comparing with monitor bounds
+                // Some apps don't report showCmd=3 even when maximized
+                let is_maximized = if is_minimized {
+                    false // Minimized windows are never maximized
+                } else {
+                    // Check if showCmd says it's maximized
+                    let showCmd_maximized = placement.showCmd == 3;
+
+                    // Also check if window fills the entire monitor (with small tolerance)
+                    let monitor = monitors.get(monitor_index as usize);
+                    let visually_maximized = if let Some(mon) = monitor {
+                        let mon_width = mon.width as i32;
+                        let mon_height = mon.height as i32;
+
+                        // Allow 20px tolerance for taskbar/borders
+                        let width_matches = (width - mon_width).abs() <= 20;
+                        let height_matches = (height - mon_height).abs() <= 20;
+
+                        width_matches && height_matches
+                    } else {
+                        false
+                    };
+
+                    showCmd_maximized || visually_maximized
+                };
 
                 windows.push(WindowPosition {
                     hwnd: hwnd.0 as isize,

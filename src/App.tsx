@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import Dashboard from "./components/Dashboard";
 import SelectionOverlay from "./components/SelectionOverlay";
 import Editor from "./components/Editor";
 import History from "./components/History";
@@ -6,10 +7,10 @@ import ColorPicker from "./components/ColorPicker";
 import DesktopGuardian from "./components/DesktopGuardian";
 import WakePopup from "./components/WakePopup";
 
-type View = "selection" | "editor" | "history" | "colorpicker" | "desktop-guardian";
+type View = "dashboard" | "selection" | "editor" | "history" | "colorpicker" | "desktop-guardian";
 
 function App() {
-  const [view, setView] = useState<View>("selection");
+  const [view, setView] = useState<View>("dashboard");
 
   useEffect(() => {
     // Determine which view to show based on URL path or hash
@@ -24,8 +25,10 @@ function App() {
       setView("history");
     } else if (path.includes("colorpicker")) {
       setView("colorpicker");
-    } else {
+    } else if (path.includes("selection")) {
       setView("selection");
+    } else {
+      setView("dashboard");
     }
 
     // Listen for hash changes (for navigation from other windows)
@@ -40,13 +43,14 @@ function App() {
 
   return (
     <div className="h-full w-full">
+      {view === "dashboard" && <Dashboard />}
       {view === "selection" && <SelectionOverlay />}
       {view === "editor" && <Editor />}
       {view === "history" && <History />}
       {view === "colorpicker" && <ColorPicker />}
       {view === "desktop-guardian" && <DesktopGuardian />}
       {/* Wake popup shown over everything when system wakes from sleep */}
-      {view === "history" && <WakePopup />}
+      <WakePopup />
     </div>
   );
 }

@@ -791,6 +791,24 @@ fn open_editor_window(
     Ok(())
 }
 
+fn open_main_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.set_focus()?;
+        return Ok(());
+    }
+
+    let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("/".into()))
+        .title("Madera.Tools")
+        .inner_size(1200.0, 800.0)
+        .center()
+        .resizable(true)
+        .decorations(true)
+        .build()?;
+
+    window.set_focus()?;
+    Ok(())
+}
+
 fn open_history_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(window) = app.get_webview_window("history") {
         window.set_focus()?;
@@ -798,7 +816,7 @@ fn open_history_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>
     }
 
     let window = WebviewWindowBuilder::new(app, "history", WebviewUrl::App("/history".into()))
-        .title("Madera.Tools")
+        .title("Madera.Tools - History")
         .inner_size(1200.0, 800.0)
         .center()
         .resizable(true)
@@ -921,8 +939,10 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // When a second instance is launched, just focus existing window or show tray notification
-            if let Some(window) = app.get_webview_window("history") {
+            if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_focus();
+            } else {
+                let _ = open_main_window(app);
             }
         }))
         .manage(AppState {
