@@ -1,0 +1,32 @@
+# Node
+node_modules/
+dist/
+*.log
+npm-debug.log*
+
+# Rust
+src-tauri/target/
+src-tauri/Cargo.lock
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Tauri
+src-tauri/gen/
+
+# Invalid files
+nul
