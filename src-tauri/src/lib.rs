@@ -797,6 +797,7 @@ fn open_main_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // Open with explicit index.html path for dashboard (root)
     let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
         .title("Madera.Tools")
         .inner_size(1200.0, 800.0)
