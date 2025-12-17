@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowInfo, GetWindowPlacement, GetWindowTextLengthW, GetWindowTextW,
+    EnumWindows, GetWindowInfo, GetWindowPlacement, GetWindowRect, GetWindowTextLengthW, GetWindowTextW,
     GetWindowThreadProcessId, IsWindowVisible, SetWindowPlacement, SetWindowPos, ShowWindow,
     WINDOWINFO, WINDOWPLACEMENT, WINDOWPLACEMENT_FLAGS, SWP_NOZORDER, SWP_NOACTIVATE,
     SW_RESTORE, SW_MAXIMIZE, SW_MINIMIZE, SW_SHOWNORMAL,
@@ -237,20 +237,34 @@ pub fn get_all_windows() -> Vec<WindowPosition> {
             GetWindowThreadProcessId(hwnd, Some(&mut pid));
             let process_name = get_process_name(pid);
 
-            // Get window placement
+            // Get window placement for state (minimized/maximized)
             let mut placement: WINDOWPLACEMENT = std::mem::zeroed();
             placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
 
             if GetWindowPlacement(hwnd, &mut placement).is_ok() {
-                let rect = placement.rcNormalPosition;
+                // SW_SHOWMAXIMIZED = 3, SW_SHOWMINIMIZED = 2
+                let is_maximized = placement.showCmd == 3;
+                let is_minimized = placement.showCmd == 2;
+
+                // For position/size, use different sources depending on window state:
+                // - Minimized: use rcNormalPosition (GetWindowRect returns weird coords)
+                // - Maximized/Normal: use GetWindowRect (actual current position)
+                let rect = if is_minimized {
+                    // For minimized windows, use the "normal" position
+                    placement.rcNormalPosition
+                } else {
+                    // For visible/maximized windows, get ACTUAL current rect
+                    let mut current_rect = RECT::default();
+                    if GetWindowRect(hwnd, &mut current_rect).is_err() {
+                        return BOOL(1); // Skip if can't get rect
+                    }
+                    current_rect
+                };
+
                 let x = rect.left;
                 let y = rect.top;
                 let width = rect.right - rect.left;
                 let height = rect.bottom - rect.top;
-
-                // SW_SHOWMAXIMIZED = 3, SW_SHOWMINIMIZED = 2
-                let is_maximized = placement.showCmd == 3;
-                let is_minimized = placement.showCmd == 2;
 
                 let monitor_index = get_monitor_for_position(x, y, monitors);
 
