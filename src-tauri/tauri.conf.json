@@ -11,14 +11,19 @@
   },
   "app": {
     "withGlobalTauri": true,
-    "windows": [],
+    "windows": [
+      {
+        "title": "Madera.Tools",
+        "label": "main",
+        "width": 1200,
+        "height": 800,
+        "center": true,
+        "resizable": true,
+        "url": "index.html"
+      }
+    ],
     "security": {
       "csp": null
-    },
-    "trayIcon": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": false,
-      "id": "main-tray"
     }
   },
   "bundle": {

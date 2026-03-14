@@ -38,7 +38,11 @@ impl ClipboardContent {
                 "text".hash(&mut hasher);
                 text.hash(&mut hasher);
             }
-            ClipboardContent::Image { data, width, height } => {
+            ClipboardContent::Image {
+                data,
+                width,
+                height,
+            } => {
                 "image".hash(&mut hasher);
                 data.hash(&mut hasher);
                 width.hash(&mut hasher);
@@ -79,6 +83,8 @@ impl Default for ClipboardSettings {
 
 pub struct ClipboardMonitor {
     running: Arc<AtomicBool>,
+    paused: Arc<AtomicBool>,
+    skip_next: Arc<AtomicBool>,
     last_content_hash: Arc<std::sync::Mutex<u64>>,
     settings: Arc<std::sync::Mutex<ClipboardSettings>>,
 }
@@ -87,9 +93,23 @@ impl ClipboardMonitor {
     pub fn new() -> Self {
         Self {
             running: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
+            skip_next: Arc::new(AtomicBool::new(false)),
             last_content_hash: Arc::new(std::sync::Mutex::new(0)),
             settings: Arc::new(std::sync::Mutex::new(ClipboardSettings::default())),
         }
+    }
+
+    pub fn skip_next_change(&self) {
+        self.skip_next.store(true, Ordering::SeqCst);
+    }
+
+    pub fn pause(&self) {
+        self.paused.store(true, Ordering::SeqCst);
+    }
+
+    pub fn resume(&self) {
+        self.paused.store(false, Ordering::SeqCst);
     }
 
     pub fn is_running(&self) -> bool {
@@ -115,6 +135,8 @@ impl ClipboardMonitor {
         self.running.store(true, Ordering::SeqCst);
 
         let running = Arc::clone(&self.running);
+        let paused = Arc::clone(&self.paused);
+        let skip_next = Arc::clone(&self.skip_next);
         let last_hash = Arc::clone(&self.last_content_hash);
         let settings = Arc::clone(&self.settings);
 
@@ -131,7 +153,7 @@ impl ClipboardMonitor {
             while running.load(Ordering::SeqCst) {
                 let current_settings = settings.lock().unwrap().clone();
 
-                if !current_settings.enabled {
+                if !current_settings.enabled || paused.load(Ordering::SeqCst) {
                     thread::sleep(Duration::from_millis(500));
                     continue;
                 }
@@ -142,6 +164,12 @@ impl ClipboardMonitor {
                 let mut last = last_hash.lock().unwrap();
                 if content_hash != *last {
                     *last = content_hash;
+
+                    if skip_next.swap(false, Ordering::SeqCst) {
+                        drop(last);
+                        thread::sleep(Duration::from_millis(300));
+                        continue;
+                    }
 
                     // Skip empty content
                     if !matches!(content, ClipboardContent::Empty) {
@@ -301,17 +329,23 @@ mod tests {
     fn test_sensitive_content_detection() {
         // Credit cards
         assert!(ClipboardMonitor::is_sensitive_content("4111111111111111"));
-        assert!(ClipboardMonitor::is_sensitive_content("5500 0000 0000 0004"));
+        assert!(ClipboardMonitor::is_sensitive_content(
+            "5500 0000 0000 0004"
+        ));
 
         // SSN
         assert!(ClipboardMonitor::is_sensitive_content("123-45-6789"));
 
         // AWS Key
-        assert!(ClipboardMonitor::is_sensitive_content("AKIAIOSFODNN7EXAMPLE"));
+        assert!(ClipboardMonitor::is_sensitive_content(
+            "AKIAIOSFODNN7EXAMPLE"
+        ));
 
         // Normal text should pass
         assert!(!ClipboardMonitor::is_sensitive_content("Hello, World!"));
-        assert!(!ClipboardMonitor::is_sensitive_content("This is a normal sentence."));
+        assert!(!ClipboardMonitor::is_sensitive_content(
+            "This is a normal sentence."
+        ));
     }
 
     #[test]

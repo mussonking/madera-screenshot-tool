@@ -5,37 +5,52 @@ import Editor from "./components/Editor";
 import History from "./components/History";
 import ColorPicker from "./components/ColorPicker";
 import DesktopGuardian from "./components/DesktopGuardian";
+import MultiPaster from "./components/MultiPaster";
 import WakePopup from "./components/WakePopup";
+import SettingsPage from "./components/SettingsPage";
+import QuickPasteModal from "./components/QuickPasteModal";
 
-type View = "dashboard" | "selection" | "editor" | "history" | "colorpicker" | "desktop-guardian";
+type View = "dashboard" | "selection" | "editor" | "history" | "colorpicker" | "desktop-guardian" | "multipaste" | "settings" | "quickpaste";
 
 function App() {
   const [view, setView] = useState<View>("dashboard");
 
+  // Auto-save is handled in the Rust backend (runs even without windows open)
+
   useEffect(() => {
     // Determine which view to show based on URL path or hash
-    const path = window.location.pathname;
-    const hash = window.location.hash;
+    const determineView = () => {
+      const path = window.location.pathname;
+      const hash = window.location.hash;
 
-    if (hash.includes("desktop-guardian") || path.includes("desktop-guardian")) {
-      setView("desktop-guardian");
-    } else if (path.includes("editor")) {
-      setView("editor");
-    } else if (path.includes("history")) {
-      setView("history");
-    } else if (path.includes("colorpicker")) {
-      setView("colorpicker");
-    } else if (path.includes("selection")) {
-      setView("selection");
-    } else {
-      setView("dashboard");
-    }
+      if (hash.includes("multipaste") || path.includes("multipaste")) {
+        return "multipaste";
+      } else if (hash.includes("quickpaste") || path.includes("quickpaste")) {
+        return "quickpaste";
+      } else if (hash.includes("settings") || path.includes("settings")) {
+        return "settings";
+      } else if (hash.includes("desktop-guardian") || path.includes("desktop-guardian")) {
+        return "desktop-guardian";
+      } else if (hash.includes("editor") || path.includes("editor")) {
+        return "editor";
+      } else if (hash.includes("history") || path.includes("history")) {
+        return "history";
+      } else if (hash.includes("colorpicker") || path.includes("colorpicker")) {
+        return "colorpicker";
+      } else if (hash.includes("selection") || path.includes("selection")) {
+        return "selection";
+      } else if (hash.includes("dashboard") || path.includes("dashboard")) {
+        return "dashboard";
+      } else {
+        return "dashboard";
+      }
+    };
+
+    setView(determineView());
 
     // Listen for hash changes (for navigation from other windows)
     const handleHashChange = () => {
-      if (window.location.hash.includes("desktop-guardian")) {
-        setView("desktop-guardian");
-      }
+      setView(determineView());
     };
     window.addEventListener("hashchange", handleHashChange);
     return () => window.removeEventListener("hashchange", handleHashChange);
@@ -49,6 +64,9 @@ function App() {
       {view === "history" && <History />}
       {view === "colorpicker" && <ColorPicker />}
       {view === "desktop-guardian" && <DesktopGuardian />}
+      {view === "multipaste" && <MultiPaster />}
+      {view === "quickpaste" && <QuickPasteModal />}
+      {view === "settings" && <SettingsPage />}
       {/* Wake popup shown over everything when system wakes from sleep */}
       <WakePopup />
     </div>

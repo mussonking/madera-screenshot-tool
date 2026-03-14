@@ -1,117 +1,117 @@
-import { useState } from 'react';
-import { Camera, Palette, History as HistoryIcon, Shield } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Camera, Palette, Shield, LayoutDashboard, Settings, Copy } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import History from './History';
+import SettingsModal from './SettingsModal';
+import { THEMES, ThemeName, loadThemeFromStore } from '../utils/theme';
 
 export default function Dashboard() {
-  const [showHistory, setShowHistory] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [currentTheme, setCurrentTheme] = useState<ThemeName>("default");
+
+  useEffect(() => {
+    loadThemeFromStore().then(setCurrentTheme);
+  }, []);
+
+  const theme = THEMES[currentTheme];
 
   const tools = [
     {
       id: 'screenshot',
-      name: 'Screenshot Tool',
+      name: 'Capture',
       icon: Camera,
-      description: 'Capture and edit screenshots',
-      shortcut: 'Ctrl+Shift+S',
-      action: () => invoke('trigger_screenshot_capture'),
-      gradient: 'from-blue-500 to-cyan-500',
+      action: () => invoke('trigger_capture'),
     },
     {
       id: 'color-picker',
-      name: 'Color Picker',
+      name: 'Colors',
       icon: Palette,
-      description: 'Pick colors from your screen',
-      shortcut: 'Ctrl+Shift+X',
-      action: () => invoke('open_color_picker_panel'),
-      gradient: 'from-purple-500 to-pink-500',
-    },
-    {
-      id: 'history',
-      name: 'History Manager',
-      icon: HistoryIcon,
-      description: 'View clipboard & screenshot history',
-      shortcut: 'Ctrl+Shift+V',
-      action: () => setShowHistory(!showHistory),
-      gradient: 'from-green-500 to-emerald-500',
+      action: () => invoke('trigger_color_picker'),
     },
     {
       id: 'desktop-guardian',
-      name: 'Desktop Guardian',
+      name: 'Guardian',
       icon: Shield,
-      description: 'Save & restore window layouts',
-      shortcut: '',
-      action: () => invoke('open_desktop_guardian_panel'),
-      gradient: 'from-orange-500 to-red-500',
+      action: () => invoke('open_desktop_guardian'),
+    },
+    {
+      id: 'quick-paste',
+      name: 'Quick Paste',
+      icon: Copy,
+      action: () => invoke('open_quick_paste_panel'),
     },
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white p-8">
-      {/* Header */}
-      <div className="max-w-6xl mx-auto mb-12">
-        <h1 className="text-5xl font-bold mb-4 bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
-          Madera.Tools
-        </h1>
-        <p className="text-slate-400 text-lg">
-          Professional productivity suite for developers and power users
-        </p>
-      </div>
-
-      {/* Tools Grid */}
-      <div className="max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-        {tools.map((tool) => {
-          const Icon = tool.icon;
-          return (
-            <button
-              key={tool.id}
-              onClick={tool.action}
-              className="group relative bg-slate-800/50 backdrop-blur-sm rounded-2xl p-8 border border-slate-700 hover:border-slate-600 transition-all duration-300 hover:scale-105 hover:shadow-2xl text-left overflow-hidden"
-            >
-              {/* Gradient background on hover */}
-              <div className={`absolute inset-0 bg-gradient-to-br ${tool.gradient} opacity-0 group-hover:opacity-10 transition-opacity duration-300`} />
-
-              <div className="relative z-10">
-                <div className="flex items-start justify-between mb-4">
-                  <div className={`p-4 rounded-xl bg-gradient-to-br ${tool.gradient} shadow-lg`}>
-                    <Icon className="w-8 h-8" />
-                  </div>
-                  {tool.shortcut && (
-                    <div className="px-3 py-1 bg-slate-700/50 rounded-lg text-xs font-mono text-slate-300">
-                      {tool.shortcut}
-                    </div>
-                  )}
-                </div>
-
-                <h2 className="text-2xl font-bold mb-2">{tool.name}</h2>
-                <p className="text-slate-400">{tool.description}</p>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      {/* History Section */}
-      {showHistory && (
-        <div className="max-w-6xl mx-auto">
-          <div className="bg-slate-800/50 backdrop-blur-sm rounded-2xl p-6 border border-slate-700">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-2xl font-bold">Recent History</h2>
-              <button
-                onClick={() => setShowHistory(false)}
-                className="text-slate-400 hover:text-white transition-colors"
-              >
-                Hide
-              </button>
-            </div>
-            <History />
-          </div>
+    <div
+      className="h-screen w-full flex flex-col overflow-hidden"
+      style={{
+        backgroundColor: theme.canvasBg,
+        color: theme.textColor,
+        fontFamily: theme.fontFamily,
+      }}
+    >
+      {/* Top Toolbar */}
+      <div
+        className="shrink-0 flex items-center justify-between p-4 border-b"
+        style={{
+          backgroundColor: theme.toolbar,
+          borderColor: theme.toolbarBorder,
+        }}
+      >
+        <div className="flex items-center gap-3">
+          <LayoutDashboard size={24} style={{ color: theme.accentColor }} />
+          <h1 className="text-xl font-bold">
+            Madera.Tools
+          </h1>
         </div>
-      )}
 
-      {/* Footer */}
-      <div className="max-w-6xl mx-auto mt-12 text-center text-slate-500 text-sm">
-        <p>Madera.Tools v1.0.0 • Professional Edition</p>
+        <div className="flex items-center gap-2">
+          {/* Quick Tools */}
+          {tools.map((tool) => {
+            const Icon = tool.icon;
+            return (
+              <button
+                key={tool.id}
+                onClick={tool.action}
+                style={{
+                  backgroundColor: theme.buttonBg,
+                  borderRadius: theme.borderRadius,
+                }}
+                className="flex items-center gap-2 px-3 py-2 hover:opacity-80 transition-colors text-sm font-medium"
+                title={tool.name}
+              >
+                <Icon size={16} />
+                <span className="hidden sm:inline">{tool.name}</span>
+              </button>
+            );
+          })}
+
+          <div className="w-px h-6 mx-2" style={{ backgroundColor: theme.toolbarBorder }} />
+
+          {/* Settings Button */}
+          <button
+            onClick={() => setShowSettings(true)}
+            style={{
+              backgroundColor: theme.buttonBg,
+              borderRadius: theme.borderRadius,
+            }}
+            className="p-2 hover:opacity-80 transition-colors"
+            title="Settings"
+          >
+            <Settings size={18} />
+          </button>
+        </div>
       </div>
+
+      {/* Main Content Area - Full screen History */}
+      <History />
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
+      />
     </div>
   );
 }

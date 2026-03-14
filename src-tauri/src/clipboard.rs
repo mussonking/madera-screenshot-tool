@@ -31,33 +31,54 @@ impl ClipboardManager {
 
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
+        let rgba_raw = rgba.into_raw();
 
-        // Create clipboard and set image
         let mut clipboard =
             Clipboard::new().map_err(|e| ClipboardError::AccessError(e.to_string()))?;
 
-        let image_data = ImageData {
-            width: width as usize,
-            height: height as usize,
-            bytes: rgba.into_raw().into(),
-        };
+        let mut last_err = String::new();
+        // Fast retry loop: 20 tries x 25ms = 500ms max delay for lock contention evasion
+        for _ in 0..20 {
+            let image_data = ImageData {
+                width: width as usize,
+                height: height as usize,
+                bytes: std::borrow::Cow::Borrowed(&rgba_raw),
+            };
 
-        clipboard
-            .set_image(image_data)
-            .map_err(|e| ClipboardError::CopyError(e.to_string()))?;
+            match clipboard.set_image(image_data) {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    last_err = e.to_string();
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+            }
+        }
 
-        Ok(())
+        Err(ClipboardError::CopyError(format!(
+            "Failed after retries: {}",
+            last_err
+        )))
     }
 
     pub fn copy_text_to_clipboard(&self, text: &str) -> Result<(), ClipboardError> {
         let mut clipboard =
             Clipboard::new().map_err(|e| ClipboardError::AccessError(e.to_string()))?;
 
-        clipboard
-            .set_text(text)
-            .map_err(|e| ClipboardError::CopyError(e.to_string()))?;
+        let mut last_err = String::new();
+        for _ in 0..20 {
+            match clipboard.set_text(text) {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    last_err = e.to_string();
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+            }
+        }
 
-        Ok(())
+        Err(ClipboardError::CopyError(format!(
+            "Failed after retries: {}",
+            last_err
+        )))
     }
 }
 

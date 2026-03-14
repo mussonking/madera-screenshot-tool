@@ -26,6 +26,7 @@ import {
   ZoomOut,
   Maximize2,
   LayoutGrid,
+  Upload,
 } from "lucide-react";
 
 type Tool =
@@ -45,6 +46,12 @@ interface PendingCapture {
   image_data: string;
   width: number;
   height: number;
+}
+
+interface Toast {
+  message: string;
+  type: 'success' | 'error' | 'info';
+  visible: boolean;
 }
 
 // Theme definitions
@@ -173,7 +180,7 @@ const THEMES: Record<ThemeName, Theme> = {
   },
 };
 
-const STROKE_WIDTHS = [2, 4, 6, 8, 12];
+const STROKE_WIDTHS = [1, 2, 4, 6, 8, 12];
 
 // Padding around the image for annotations outside bounds
 const CANVAS_PADDING = 50;
@@ -214,15 +221,21 @@ export default function Editor() {
   const [currentTheme, setCurrentTheme] = useState<ThemeName>("default");
   const [color, setColor] = useState("#ff0000"); // Always bright red default
   const [themeLoaded, setThemeLoaded] = useState(false);
-  const [strokeWidth, setStrokeWidth] = useState(4);
+  const [strokeWidth, setStrokeWidth] = useState(2);
   const [showColorPicker, setShowColorPicker] = useState(false);
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
-  const [originalImage, setOriginalImage] = useState<string | null>(null);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [baseCanvasSize, setBaseCanvasSize] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState(1);
+  const [isUploading, setIsUploading] = useState(false);
+  const [toast, setToast] = useState<Toast>({ message: '', type: 'info', visible: false });
+
+  const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ message, type, visible: true });
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+  };
 
   // Get current theme and colors
   const theme = THEMES[currentTheme];
@@ -233,7 +246,7 @@ export default function Editor() {
   const historyIndexRef = useRef(-1);
 
   // Ref for copyToClipboard to be accessible in global event listener
-  const copyToClipboardRef = useRef<() => void>(() => {});
+  const copyToClipboardRef = useRef<() => void>(() => { });
 
   // Load theme from store on mount
   useEffect(() => {
@@ -415,17 +428,17 @@ export default function Editor() {
 
   const loadImage = async () => {
     try {
+      console.log('Fetching pending capture...');
       const pending = await invoke<PendingCapture | null>("get_pending_capture");
       if (!pending) {
-        console.error("No pending capture");
+        console.error("No pending capture returned from backend");
         return;
       }
-
-      setOriginalImage(pending.image_data);
       setImageSize({ width: pending.width, height: pending.height });
 
       // Wait for DOM to be ready
       setTimeout(() => {
+        console.log('Initializing canvas...');
         initCanvas(pending.image_data, pending.width, pending.height);
       }, 100);
     } catch (err) {
@@ -442,9 +455,15 @@ export default function Editor() {
     }
 
     // Calculate canvas size to fit in container
+    // Calculate canvas size to fit in container
     const container = containerRef.current;
-    const maxWidth = container.clientWidth - 40;
-    const maxHeight = container.clientHeight - 40;
+
+    // Fallback to window size if container is not ready (prevents 0/negative values)
+    const cw = container.clientWidth || window.innerWidth;
+    const ch = container.clientHeight || window.innerHeight;
+
+    const maxWidth = cw - 40;
+    const maxHeight = ch - 40;
 
     // Calculate scaled image dimensions
     let imageWidth = width;
@@ -463,7 +482,7 @@ export default function Editor() {
     // Store base canvas size for zoom calculations
     setBaseCanvasSize({ width: canvasWidth, height: canvasHeight });
 
-    // Create fabric canvas - use a slightly lighter/darker shade than the background for padding area
+    // Create fabric canvas
     const canvas = new fabric.Canvas(canvasRef.current, {
       width: canvasWidth,
       height: canvasHeight,
@@ -472,8 +491,9 @@ export default function Editor() {
 
     fabricRef.current = canvas;
 
-    // Load background image with padding offset
+    // Load background image
     const img = new Image();
+
     img.onload = () => {
       const fabricImage = new fabric.FabricImage(img, {
         left: CANVAS_PADDING,
@@ -487,6 +507,12 @@ export default function Editor() {
       canvas.renderAll();
       saveState();
     };
+
+    img.onerror = (err) => {
+      console.error("FAILED TO LOAD IMAGE FROM BASE64", err);
+      showNotification("Error: Failed to load image data. The screenshot data might be corrupted.", "error");
+    };
+
     img.src = `data:image/png;base64,${imageData}`;
 
     // Setup event handlers
@@ -557,8 +583,8 @@ export default function Editor() {
     const canvas = fabricRef.current;
     if (!canvas) return;
 
-    const centerX = canvas.width! / 2;
-    const centerY = canvas.height! / 2;
+    const centerX = baseCanvasSize.width / 2;
+    const centerY = baseCanvasSize.height / 2;
 
     const line = new fabric.Line([centerX - 50, centerY, centerX + 50, centerY], {
       stroke: color,
@@ -601,8 +627,8 @@ export default function Editor() {
     if (!canvas) return;
 
     const rect = new fabric.Rect({
-      left: canvas.width! / 2 - 50,
-      top: canvas.height! / 2 - 30,
+      left: baseCanvasSize.width / 2 - 50,
+      top: baseCanvasSize.height / 2 - 30,
       width: 100,
       height: 60,
       fill: "transparent",
@@ -622,8 +648,8 @@ export default function Editor() {
     if (!canvas) return;
 
     const circle = new fabric.Circle({
-      left: canvas.width! / 2 - 40,
-      top: canvas.height! / 2 - 40,
+      left: baseCanvasSize.width / 2 - 40,
+      top: baseCanvasSize.height / 2 - 40,
       radius: 40,
       fill: "transparent",
       stroke: color,
@@ -643,8 +669,8 @@ export default function Editor() {
 
     // Add a blur rectangle
     const rect = new fabric.Rect({
-      left: canvas.width! / 2 - 50,
-      top: canvas.height! / 2 - 30,
+      left: baseCanvasSize.width / 2 - 50,
+      top: baseCanvasSize.height / 2 - 30,
       width: 100,
       height: 60,
       fill: "#888888",
@@ -775,55 +801,54 @@ export default function Editor() {
   // Export functions
   const getExportedImage = async (): Promise<string> => {
     const canvas = fabricRef.current;
-    if (!canvas || !originalImage) return "";
-
-    // Calculate the scaled image size on the canvas (without padding)
-    const canvasImageWidth = canvas.width! - CANVAS_PADDING * 2;
-    const canvasImageHeight = canvas.height! - CANVAS_PADDING * 2;
-
-    // Create a temporary canvas at full resolution
-    const tempCanvas = document.createElement("canvas");
-    tempCanvas.width = imageSize.width;
-    tempCanvas.height = imageSize.height;
-    const ctx = tempCanvas.getContext("2d")!;
-
-    // Draw original image
-    const img = new Image();
-    await new Promise<void>((resolve) => {
-      img.onload = () => {
-        ctx.drawImage(img, 0, 0);
-        resolve();
-      };
-      img.src = `data:image/png;base64,${originalImage}`;
-    });
-
-    // Scale factor (from canvas image area to full resolution)
-    const scaleX = imageSize.width / canvasImageWidth;
-    const scaleY = imageSize.height / canvasImageHeight;
-
-    // Draw fabric objects scaled up
-    const objects = canvas.getObjects();
-    for (const obj of objects) {
-      const objCanvas = obj.toCanvasElement({
-        multiplier: scaleX,
-      });
-      // Subtract padding from canvas coordinates, then scale to full resolution
-      const left = ((obj.left || 0) - CANVAS_PADDING) * scaleX;
-      const top = ((obj.top || 0) - CANVAS_PADDING) * scaleY;
-      ctx.drawImage(objCanvas, left, top);
+    if (!canvas) {
+      showNotification("Error: Canvas not found", "error");
+      return "";
     }
 
-    // Return base64 without the data URL prefix
-    const dataUrl = tempCanvas.toDataURL("image/png");
-    return dataUrl.replace(/^data:image\/png;base64,/, "");
+    try {
+      // Deselect any active objects so selection borders don't get exported
+      canvas.discardActiveObject();
+      canvas.renderAll();
+
+      // Simplest possible export: exactly what is on the canvas right now
+      const finalDataUrl = canvas.toDataURL({
+        format: "png",
+        multiplier: 1,
+        quality: 1.0
+      });
+
+      if (!finalDataUrl || finalDataUrl.length < 100) {
+         showNotification("Error: Generated image is empty", "error");
+         return "";
+      }
+
+      // Return base64 without the data URL prefix
+      return finalDataUrl.replace(/^data:image\/png;base64,/, "");
+    } catch (e) {
+      console.error("Exception in getExportedImage:", e);
+      showNotification(`Export exception: ${e}`, "error");
+      return "";
+    }
   };
 
   const copyToClipboard = useCallback(async () => {
     try {
+      console.log("copyToClipboard invoked!");
       const imageData = await getExportedImage();
+      console.log("getExportedImage returned image data of length:", imageData?.length);
+      if (!imageData) {
+        showNotification("Error: exported image is empty!", "error");
+        return;
+      }
+
+      console.log("Invoking copy_to_clipboard...");
       await invoke("copy_to_clipboard", { imageData });
+      console.log("copy_to_clipboard success!");
+      showNotification(`Copied to clipboard! (Data len: ${Math.round(imageData.length / 1024)}KB)`, "success");
 
       // Save to history
+      console.log("Invoking save_to_history...");
       await invoke("save_to_history", {
         imageData,
         width: imageSize.width,
@@ -833,6 +858,7 @@ export default function Editor() {
       // Don't close window - user may want to continue editing
     } catch (err) {
       console.error("Failed to copy:", err);
+      showNotification(`Copy Failed: ${err}`, "error");
     }
   }, [imageSize]);
 
@@ -864,6 +890,26 @@ export default function Editor() {
       }
     } catch (err) {
       console.error("Failed to save:", err);
+    }
+  };
+
+  const uploadToCLI = async () => {
+    try {
+      setIsUploading(true);
+      const imageData = await getExportedImage();
+      const remotePath = await invoke<string>('upload_to_dev_server', { imageData });
+
+      // Show success notification
+      console.log(`✅ Uploaded! Path copied: ${remotePath}`);
+      showNotification(`Upload réussi ! Lien copié.`, 'success');
+
+      // Optional: close window after upload
+      // await closeWindow();
+    } catch (err) {
+      console.error("Upload failed:", err);
+      showNotification(`Erreur: ${err}`, 'error');
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -920,8 +966,8 @@ export default function Editor() {
     if (!canvas) return;
 
     const text = new fabric.IText("Click to edit", {
-      left: canvas.width! / 2 - 50,
-      top: canvas.height! / 2 - 10,
+      left: baseCanvasSize.width / 2 - 50,
+      top: baseCanvasSize.height / 2 - 10,
       fontSize: 20,
       fill: color,
       fontFamily: "Arial",
@@ -937,8 +983,8 @@ export default function Editor() {
     const canvas = fabricRef.current;
     if (!canvas) return;
 
-    const centerX = canvas.width! / 2;
-    const centerY = canvas.height! / 2;
+    const centerX = baseCanvasSize.width / 2;
+    const centerY = baseCanvasSize.height / 2;
     const nextNumber = getNextAvailableNumber();
 
     const circle = new fabric.Circle({
@@ -1028,7 +1074,7 @@ export default function Editor() {
 
   return (
     <div
-      className={`h-full flex flex-col ${getThemeClasses()}`}
+      className={`h-screen w-screen flex flex-col overflow-hidden ${getThemeClasses()}`}
       style={{
         backgroundColor: theme.canvasBg,
         fontFamily: theme.fontFamily,
@@ -1039,17 +1085,17 @@ export default function Editor() {
         className="p-2 flex items-center gap-2 shadow-md"
         style={{
           backgroundColor: theme.toolbar,
-          borderBottom: `2px ${theme.borderStyle} ${theme.toolbarBorder}`,
-          boxShadow: theme.glowEffect ? `${theme.glowEffect}` : undefined,
+          borderBottom: `2px ${theme.borderStyle} ${theme.toolbarBorder} `,
+          boxShadow: theme.glowEffect ? `${theme.glowEffect} ` : undefined,
         }}
       >
         {/* Drawing Tools */}
         <div
           className="flex gap-1 p-1"
           style={{
-            backgroundColor: `${theme.buttonBg}80`,
+            backgroundColor: `${theme.buttonBg} 80`,
             borderRadius: theme.borderRadius,
-            border: `1px ${theme.borderStyle} ${theme.toolbarBorder}`,
+            border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
           }}
         >
           <ToolButton toolName="select" icon={() => <span className="text-sm font-bold">V</span>} shortcut="V" />
@@ -1061,9 +1107,9 @@ export default function Editor() {
         <div
           className="flex gap-1 p-1"
           style={{
-            backgroundColor: `${theme.buttonBg}80`,
+            backgroundColor: `${theme.buttonBg} 80`,
             borderRadius: theme.borderRadius,
-            border: `1px ${theme.borderStyle} ${theme.toolbarBorder}`,
+            border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
           }}
         >
           <ToolButton toolName="arrow" icon={ArrowRight} shortcut="A" />
@@ -1076,9 +1122,9 @@ export default function Editor() {
         <div
           className="flex gap-1 p-1"
           style={{
-            backgroundColor: `${theme.buttonBg}80`,
+            backgroundColor: `${theme.buttonBg} 80`,
             borderRadius: theme.borderRadius,
-            border: `1px ${theme.borderStyle} ${theme.toolbarBorder}`,
+            border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
           }}
         >
           <ToolButton toolName="text" icon={Type} shortcut="T" />
@@ -1089,9 +1135,9 @@ export default function Editor() {
         <div
           className="flex gap-1 p-1"
           style={{
-            backgroundColor: `${theme.buttonBg}80`,
+            backgroundColor: `${theme.buttonBg} 80`,
             borderRadius: theme.borderRadius,
-            border: `1px ${theme.borderStyle} ${theme.toolbarBorder}`,
+            border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
           }}
         >
           <button
@@ -1150,9 +1196,9 @@ export default function Editor() {
         <div
           className="flex gap-1 p-1 items-center"
           style={{
-            backgroundColor: `${theme.buttonBg}80`,
+            backgroundColor: `${theme.buttonBg} 80`,
             borderRadius: theme.borderRadius,
-            border: `1px ${theme.borderStyle} ${theme.toolbarBorder}`,
+            border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
           }}
         >
           <button
@@ -1205,7 +1251,7 @@ export default function Editor() {
             onClick={() => setShowColorPicker(!showColorPicker)}
             style={{
               backgroundColor: theme.buttonBg,
-              border: `2px solid ${color}`,
+              border: `2px solid ${color} `,
               borderRadius: theme.borderRadius,
             }}
             className="p-1.5 hover:opacity-80 transition-colors"
@@ -1218,7 +1264,7 @@ export default function Editor() {
               className="absolute top-full mt-2 left-0 p-3 shadow-xl z-50"
               style={{
                 backgroundColor: theme.toolbar,
-                border: `2px ${theme.borderStyle} ${theme.accentColor}`,
+                border: `2px ${theme.borderStyle} ${theme.accentColor} `,
                 borderRadius: theme.borderRadius,
                 boxShadow: theme.glowEffect,
               }}
@@ -1232,9 +1278,9 @@ export default function Editor() {
                       setColor(c);
                       setShowColorPicker(false);
                     }}
-                    className={`w-7 h-7 ${color === c ? "ring-2 ring-white scale-110" : "hover:scale-110"} transition-all shadow-md`}
+                    className={`w - 7 h - 7 ${color === c ? "ring-2 ring-white scale-110" : "hover:scale-110"} transition - all shadow - md`}
                     style={{ backgroundColor: c, borderRadius: theme.borderRadius }}
-                    title={`Color ${i + 1}`}
+                    title={`Color ${i + 1} `}
                   />
                 ))}
               </div>
@@ -1255,7 +1301,7 @@ export default function Editor() {
                       setColor(c);
                       setShowColorPicker(false);
                     }}
-                    className={`w-5 h-5 ${color === c ? "ring-1 ring-white" : "hover:scale-125"} transition-all`}
+                    className={`w - 5 h - 5 ${color === c ? "ring-1 ring-white" : "hover:scale-125"} transition - all`}
                     style={{ backgroundColor: c, borderRadius: "2px" }}
                   />
                 ))}
@@ -1283,7 +1329,7 @@ export default function Editor() {
                     backgroundColor: theme.buttonBg,
                     color: theme.textColor,
                     borderRadius: theme.borderRadius,
-                    border: `1px solid ${theme.toolbarBorder}`,
+                    border: `1px solid ${theme.toolbarBorder} `,
                   }}
                 />
               </div>
@@ -1295,9 +1341,9 @@ export default function Editor() {
         <div
           className="flex gap-1 p-1"
           style={{
-            backgroundColor: `${theme.buttonBg}80`,
+            backgroundColor: `${theme.buttonBg} 80`,
             borderRadius: theme.borderRadius,
-            border: `1px ${theme.borderStyle} ${theme.toolbarBorder}`,
+            border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
           }}
         >
           {STROKE_WIDTHS.map((w) => (
@@ -1310,7 +1356,7 @@ export default function Editor() {
                 borderRadius: theme.borderRadius,
               }}
               className="w-8 h-8 flex items-center justify-center transition-all hover:opacity-80"
-              title={`Stroke width ${w}px`}
+              title={`Stroke width ${w} px`}
             >
               <div
                 className="rounded-full bg-current"
@@ -1331,7 +1377,7 @@ export default function Editor() {
               backgroundColor: theme.buttonBg,
               color: theme.accentColor,
               borderRadius: theme.borderRadius,
-              border: `1px ${theme.borderStyle} ${theme.toolbarBorder}`,
+              border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
             }}
             className="p-2 hover:opacity-80 transition-colors"
             title="Change Theme"
@@ -1343,7 +1389,7 @@ export default function Editor() {
               className="absolute top-full mt-2 right-0 p-2 shadow-xl z-50 min-w-[180px]"
               style={{
                 backgroundColor: theme.toolbar,
-                border: `2px ${theme.borderStyle} ${theme.accentColor}`,
+                border: `2px ${theme.borderStyle} ${theme.accentColor} `,
                 borderRadius: theme.borderRadius,
                 boxShadow: theme.glowEffect,
               }}
@@ -1381,7 +1427,7 @@ export default function Editor() {
         className="p-3 flex items-center justify-center gap-4"
         style={{
           backgroundColor: theme.toolbar,
-          borderTop: `2px ${theme.borderStyle} ${theme.toolbarBorder}`,
+          borderTop: `2px ${theme.borderStyle} ${theme.toolbarBorder} `,
         }}
       >
         <button
@@ -1402,12 +1448,27 @@ export default function Editor() {
             backgroundColor: theme.buttonBg,
             color: theme.textColor,
             borderRadius: theme.borderRadius,
-            border: `1px ${theme.borderStyle} ${theme.toolbarBorder}`,
+            border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
           }}
           className="px-6 py-2 hover:opacity-80 transition-colors flex items-center gap-2"
         >
           <Save size={18} />
           {currentTheme === "retro" ? "> SAVE" : currentTheme === "cyberpunk" ? "SAVE_" : "Save"}
+        </button>
+        {/* CLI Upload Button */}
+        <button
+          onClick={uploadToCLI}
+          disabled={isUploading}
+          style={{
+            backgroundColor: "#10b981",
+            borderRadius: theme.borderRadius,
+            opacity: isUploading ? 0.5 : 1,
+          }}
+          className="px-6 py-2 text-white hover:opacity-80 transition-colors flex items-center gap-2 font-medium"
+          title="Upload to DEV Server and copy path"
+        >
+          <Upload size={18} />
+          {isUploading ? "Uploading..." : (currentTheme === "retro" ? "> CLI" : currentTheme === "cyberpunk" ? "CLI_" : "📤 CLI")}
         </button>
         <button
           onClick={async () => {
@@ -1417,7 +1478,7 @@ export default function Editor() {
             backgroundColor: theme.buttonBg,
             color: theme.textColor,
             borderRadius: theme.borderRadius,
-            border: `1px ${theme.borderStyle} ${theme.toolbarBorder}`,
+            border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
           }}
           className="px-6 py-2 hover:opacity-80 transition-colors flex items-center gap-2"
         >
@@ -1435,6 +1496,18 @@ export default function Editor() {
           <X size={18} />
           {currentTheme === "retro" ? "> EXIT" : currentTheme === "cyberpunk" ? "EXIT_" : "Cancel"}
         </button>
+      </div>
+      {/* Toast Notification */}
+      <div
+        className={`fixed bottom-8 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 transition-all duration-300 z-50 ${toast.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
+          } ${toast.type === 'success' ? 'bg-green-500 text-white' :
+            toast.type === 'error' ? 'bg-red-500 text-white' :
+              'bg-slate-800 text-white'
+          }`}
+      >
+        {toast.type === 'success' && <Sparkles size={20} />}
+        {toast.type === 'error' && <X size={20} />}
+        <span className="font-medium">{toast.message}</span>
       </div>
     </div>
   );

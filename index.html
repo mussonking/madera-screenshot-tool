@@ -12,6 +12,16 @@
         background-color: #000 !important;
       }
     </style>
+    <script>
+      window.onerror = function(message, source, lineno, colno, error) {
+        console.error("Global Error Caught:", message, error);
+        alert("CRASH: " + message + "\nLine: " + lineno + "\n" + (error ? error.stack : ""));
+      };
+      window.addEventListener("unhandledrejection", function(e) {
+        console.error("Promise Error:", e.reason);
+        alert("PROMISE CRASH: " + e.reason);
+      });
+    </script>
     <!-- Google Fonts for themes -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

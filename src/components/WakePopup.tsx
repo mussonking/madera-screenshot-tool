@@ -33,6 +33,13 @@ export default function WakePopup() {
   const [showResults, setShowResults] = useState(false);
 
   useEffect(() => {
+    if (showPopup) {
+      // Ensure the window is visible, centered and focused when popup appears
+      invoke("ensure_current_window_visible").catch(console.error);
+    }
+  }, [showPopup]);
+
+  useEffect(() => {
     // Listen for wake from sleep event
     const unlistenWake = listen("system-wake-from-sleep", async () => {
       console.log("System woke from sleep!");

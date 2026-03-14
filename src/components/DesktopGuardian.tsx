@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
 import { format, parseISO } from "date-fns";
 import {
@@ -164,9 +165,13 @@ const loadThemeFromStore = async (): Promise<ThemeName> => {
   return "default";
 };
 
-const loadLayoutsFromStore = async (): Promise<SavedLayout[]> => {
+const loadLayoutsFromStore = async (forceReload = false): Promise<SavedLayout[]> => {
   try {
     const store = await load(STORE_PATH);
+    // Force reload from disk if requested (e.g., after backend auto-save)
+    if (forceReload) {
+      await store.reload();
+    }
     const saved = await store.get<SavedLayout[]>("desktop_layouts");
     return saved || [];
   } catch {
@@ -224,35 +229,49 @@ export default function DesktopGuardian() {
     setLoading(false);
   }, [loadMonitors, loadCurrentWindows]);
 
+  // Load/save guardian settings
+  const loadGuardianSettings = async () => {
+    try {
+      const store = await load(STORE_PATH);
+      const settings = await store.get<{ autoSaveEnabled?: boolean; autoSaveInterval?: number }>("guardian_settings");
+      if (settings) {
+        if (settings.autoSaveEnabled !== undefined) setAutoSaveEnabled(settings.autoSaveEnabled);
+        if (settings.autoSaveInterval !== undefined) setAutoSaveInterval(settings.autoSaveInterval);
+      }
+    } catch (err) {
+      console.error("Failed to load guardian settings:", err);
+    }
+  };
+
+  const saveGuardianSettings = async (enabled: boolean, interval: number) => {
+    try {
+      const store = await load(STORE_PATH);
+      await store.set("guardian_settings", { autoSaveEnabled: enabled, autoSaveInterval: interval });
+      await store.save();
+    } catch (err) {
+      console.error("Failed to save guardian settings:", err);
+    }
+  };
+
   useEffect(() => {
     loadThemeFromStore().then(setCurrentTheme);
     loadLayoutsFromStore().then(setSavedLayouts);
+    loadGuardianSettings();
     refreshAll();
   }, [refreshAll]);
 
-  // Auto-save timer
+  // Listen for layouts-updated event from backend auto-save
   useEffect(() => {
-    if (!autoSaveEnabled) return;
+    const unlisten = listen("layouts-updated", async () => {
+      console.log("[DesktopGuardian] Received layouts-updated event, reloading...");
+      const layouts = await loadLayoutsFromStore(true); // Force reload from disk
+      setSavedLayouts(layouts);
+    });
 
-    const interval = setInterval(async () => {
-      const layout = await invoke<SavedLayout>("save_window_layout", {
-        name: `Auto-save ${format(new Date(), "HH:mm")}`,
-      });
-      layout.is_auto_save = true;
-
-      setSavedLayouts((prev) => {
-        // Keep only last 5 auto-saves
-        const autoSaves = prev.filter((l) => l.is_auto_save);
-        const manualSaves = prev.filter((l) => !l.is_auto_save);
-        const newAutoSaves = [layout, ...autoSaves].slice(0, 5);
-        const newLayouts = [...manualSaves, ...newAutoSaves];
-        saveLayoutsToStore(newLayouts);
-        return newLayouts;
-      });
-    }, autoSaveInterval * 60 * 1000);
-
-    return () => clearInterval(interval);
-  }, [autoSaveEnabled, autoSaveInterval]);
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
 
   const handleSaveLayout = async () => {
     const name = newLayoutName.trim() || `Layout ${savedLayouts.filter((l) => !l.is_auto_save).length + 1}`;
@@ -772,7 +791,11 @@ export default function DesktopGuardian() {
                   </p>
                 </div>
                 <button
-                  onClick={() => setAutoSaveEnabled(!autoSaveEnabled)}
+                  onClick={() => {
+                    const newEnabled = !autoSaveEnabled;
+                    setAutoSaveEnabled(newEnabled);
+                    saveGuardianSettings(newEnabled, autoSaveInterval);
+                  }}
                   className="w-12 h-6 rounded-full relative transition-colors"
                   style={{
                     backgroundColor: autoSaveEnabled ? theme.accentColor : theme.toolbarBorder,
@@ -805,7 +828,11 @@ export default function DesktopGuardian() {
                   max="30"
                   step="1"
                   value={autoSaveInterval}
-                  onChange={(e) => setAutoSaveInterval(Number(e.target.value))}
+                  onChange={(e) => {
+                    const newInterval = Number(e.target.value);
+                    setAutoSaveInterval(newInterval);
+                    saveGuardianSettings(autoSaveEnabled, newInterval);
+                  }}
                   className="w-full"
                   style={{ accentColor: theme.accentColor }}
                   disabled={!autoSaveEnabled}

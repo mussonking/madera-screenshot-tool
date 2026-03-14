@@ -93,8 +93,8 @@ pub struct HistoryItem {
     pub text_preview: Option<String>, // First 100 chars
     // For color picks
     pub color_hex: Option<String>,
-    pub color_rgb: Option<String>,  // "r,g,b" format
-    pub color_hsl: Option<String>,  // "h,s,l" format
+    pub color_rgb: Option<String>, // "r,g,b" format
+    pub color_hsl: Option<String>, // "h,s,l" format
     // Metadata
     pub source_app: Option<String>,
     pub is_pinned: bool,
@@ -138,6 +138,11 @@ impl HistoryManager {
         // Open database
         let db_path = data_dir.join("history.db");
         let conn = Connection::open(&db_path)?;
+
+        // Increase concurrency reliability to fix 'database is locked' errors
+        conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
 
         // Create screenshots table (legacy)
         conn.execute(
@@ -337,9 +342,7 @@ impl HistoryManager {
             .conn
             .prepare("SELECT filename FROM screenshots WHERE id = ?1")?;
 
-        let filename: Option<String> = stmt
-            .query_row(params![id], |row| row.get(0))
-            .ok();
+        let filename: Option<String> = stmt.query_row(params![id], |row| row.get(0)).ok();
 
         if let Some(filename) = filename {
             let image_path = self.screenshots_dir.join(&filename);
@@ -665,13 +668,27 @@ impl HistoryManager {
         height: u32,
         max_history: usize,
     ) -> Result<HistoryItem, HistoryError> {
+        // Decode image first to calculate hash for duplicate detection
+        let image_bytes = base64::engine::general_purpose::STANDARD
+            .decode(base64_image)
+            .map_err(|e| HistoryError::ImageError(e.to_string()))?;
+
+        // Calculate content hash for duplicate detection
+        let content_hash = calculate_content_hash(&image_bytes);
+
+        // Check if this exact image already exists
+        if let Some(existing_item) = self.get_item_by_hash(&content_hash)? {
+            // Return existing item instead of creating duplicate
+            return Ok(existing_item);
+        }
+
         // First save to legacy table for backwards compatibility
         let record = self.save_screenshot(base64_image, width, height, max_history)?;
 
-        // Also save to unified history
+        // Also save to unified history with content_hash
         self.conn.execute(
-            "INSERT INTO history_items (id, item_type, created_at, filename, thumbnail_filename, width, height, is_pinned)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0)",
+            "INSERT INTO history_items (id, item_type, created_at, filename, thumbnail_filename, width, height, is_pinned, content_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 0, ?8)",
             params![
                 record.id,
                 HistoryItemType::Screenshot.to_string(),
@@ -680,6 +697,7 @@ impl HistoryManager {
                 format!("thumb_{}", record.filename.replace(".png", ".jpg")),
                 width,
                 height,
+                content_hash,
             ],
         )?;
 
@@ -706,20 +724,33 @@ impl HistoryManager {
     }
 
     /// Get all unified history items (screenshots + clipboard)
-    pub fn get_all_history_items(&self, filter_type: Option<HistoryItemType>) -> Result<Vec<HistoryItem>, HistoryError> {
+    pub fn get_all_history_items(
+        &self,
+        filter_type: Option<HistoryItemType>,
+        limit: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<Vec<HistoryItem>, HistoryError> {
+        let limit_val = limit.map(|l| l as i64).unwrap_or(-1); // -1 means no limit in SQLite
+        let offset_val = offset.map(|o| o as i64).unwrap_or(0);
+
         let items: Vec<HistoryItem> = if let Some(ref item_type) = filter_type {
             let mut stmt = self.conn.prepare(
                 "SELECT id, item_type, created_at, filename, thumbnail_filename, width, height, saved_path, text_content, text_preview, color_hex, color_rgb, color_hsl, source_app, is_pinned
-                 FROM history_items WHERE item_type = ?1 ORDER BY is_pinned DESC, created_at DESC"
+                 FROM history_items WHERE item_type = ?1 ORDER BY is_pinned DESC, created_at DESC LIMIT ?2 OFFSET ?3"
             )?;
-            let rows = stmt.query_map(params![item_type.to_string()], |row| self.row_to_history_item(row))?;
+            let rows = stmt.query_map(
+                params![item_type.to_string(), limit_val, offset_val],
+                |row| self.row_to_history_item(row),
+            )?;
             rows.filter_map(|r| r.ok()).collect()
         } else {
             let mut stmt = self.conn.prepare(
                 "SELECT id, item_type, created_at, filename, thumbnail_filename, width, height, saved_path, text_content, text_preview, color_hex, color_rgb, color_hsl, source_app, is_pinned
-                 FROM history_items ORDER BY is_pinned DESC, created_at DESC"
+                 FROM history_items ORDER BY is_pinned DESC, created_at DESC LIMIT ?1 OFFSET ?2"
             )?;
-            let rows = stmt.query_map([], |row| self.row_to_history_item(row))?;
+            let rows = stmt.query_map(params![limit_val, offset_val], |row| {
+                self.row_to_history_item(row)
+            })?;
             rows.filter_map(|r| r.ok()).collect()
         };
 
@@ -778,6 +809,44 @@ impl HistoryManager {
         })
     }
 
+    /// Get a single history item by ID
+    pub fn get_history_item(&self, id: &str) -> Result<Option<HistoryItem>, HistoryError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, item_type, created_at, filename, thumbnail_filename, width, height, saved_path,
+                    text_content, text_preview, color_hex, color_rgb, color_hsl, source_app, is_pinned
+             FROM history_items WHERE id = ?1",
+        )?;
+
+        let item = stmt
+            .query_row(params![id], |row| self.row_to_history_item(row))
+            .optional()?;
+
+        Ok(item)
+    }
+
+    /// Load image as base64 from filename
+    pub fn load_image_base64(
+        &self,
+        filename: &str,
+        item_type: HistoryItemType,
+    ) -> Result<String, HistoryError> {
+        let image_path = match item_type {
+            HistoryItemType::Screenshot => self.screenshots_dir.join(filename),
+            HistoryItemType::ClipboardImage => self.clipboard_dir.join(filename),
+            _ => return Err(HistoryError::ImageError("Not an image type".to_string())),
+        };
+
+        if !image_path.exists() {
+            return Err(HistoryError::FileSystemError(format!(
+                "Image not found: {}",
+                filename
+            )));
+        }
+
+        let bytes = fs::read(&image_path)?;
+        Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+    }
+
     /// Get image data for a history item (screenshot or clipboard image)
     pub fn get_history_item_image(&self, id: &str) -> Result<Option<String>, HistoryError> {
         let mut stmt = self
@@ -790,7 +859,8 @@ impl HistoryManager {
 
         if let Some((item_type_str, filename)) = result {
             if let Some(filename) = filename {
-                let item_type: HistoryItemType = item_type_str.parse().unwrap_or(HistoryItemType::Screenshot);
+                let item_type: HistoryItemType =
+                    item_type_str.parse().unwrap_or(HistoryItemType::Screenshot);
 
                 let image_path = match item_type {
                     HistoryItemType::Screenshot => self.screenshots_dir.join(&filename),
@@ -814,18 +884,21 @@ impl HistoryManager {
     pub fn delete_history_item(&mut self, id: &str) -> Result<(), HistoryError> {
         // Get item info first using a scoped query
         let result: Option<(String, Option<String>, Option<String>)> = {
-            let mut stmt = self
-                .conn
-                .prepare("SELECT item_type, filename, thumbnail_filename FROM history_items WHERE id = ?1")?;
+            let mut stmt = self.conn.prepare(
+                "SELECT item_type, filename, thumbnail_filename FROM history_items WHERE id = ?1",
+            )?;
 
-            stmt.query_row(params![id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-                .ok()
+            stmt.query_row(params![id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .ok()
         };
 
         let mut is_screenshot = false;
 
         if let Some((item_type_str, filename, thumbnail_filename)) = result {
-            let item_type: HistoryItemType = item_type_str.parse().unwrap_or(HistoryItemType::Screenshot);
+            let item_type: HistoryItemType =
+                item_type_str.parse().unwrap_or(HistoryItemType::Screenshot);
 
             // Delete files if they exist
             if let Some(filename) = filename {
@@ -850,7 +923,9 @@ impl HistoryManager {
 
         // Also delete from legacy table if it's a screenshot
         if is_screenshot {
-            let _ = self.conn.execute("DELETE FROM screenshots WHERE id = ?1", params![id]);
+            let _ = self
+                .conn
+                .execute("DELETE FROM screenshots WHERE id = ?1", params![id]);
         }
 
         Ok(())
@@ -914,13 +989,16 @@ impl HistoryManager {
 
     /// Get the last clipboard content hash for duplicate detection
     pub fn get_last_clipboard_hash(&self) -> Result<Option<String>, HistoryError> {
-        let result: Option<(String, Option<String>)> = self.conn.query_row(
-            "SELECT item_type, text_content FROM history_items
+        let result: Option<(String, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT item_type, text_content FROM history_items
              WHERE item_type IN ('clipboard_text', 'clipboard_image')
              ORDER BY created_at DESC LIMIT 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).ok();
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
 
         if let Some((item_type, text_content)) = result {
             if item_type == "clipboard_text" {
@@ -935,9 +1013,11 @@ impl HistoryManager {
     /// Cleanup old history items (keeps pinned items)
     fn cleanup_old_history_items(&mut self, max_count: usize) -> Result<(), HistoryError> {
         // Get count of non-pinned items
-        let count: usize = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM history_items WHERE is_pinned = 0", [], |row| row.get(0))?;
+        let count: usize = self.conn.query_row(
+            "SELECT COUNT(*) FROM history_items WHERE is_pinned = 0",
+            [],
+            |row| row.get(0),
+        )?;
 
         if count > max_count {
             let to_delete = count - max_count;
@@ -956,14 +1036,17 @@ impl HistoryManager {
                 .collect();
 
             for (id, item_type_str, filename, thumbnail_filename) in old_items {
-                let item_type: HistoryItemType = item_type_str.parse().unwrap_or(HistoryItemType::Screenshot);
+                let item_type: HistoryItemType =
+                    item_type_str.parse().unwrap_or(HistoryItemType::Screenshot);
 
                 // Delete files
                 if let Some(filename) = filename {
                     let image_path = match item_type {
                         HistoryItemType::Screenshot => self.screenshots_dir.join(&filename),
                         HistoryItemType::ClipboardImage => self.clipboard_dir.join(&filename),
-                        HistoryItemType::ClipboardText | HistoryItemType::ColorPick => PathBuf::new(),
+                        HistoryItemType::ClipboardText | HistoryItemType::ColorPick => {
+                            PathBuf::new()
+                        }
                     };
                     let _ = fs::remove_file(image_path);
                 }
