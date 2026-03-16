@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(mkdir -p \"C:/Users/Musson/.claude/skills\")",
+      "Bash(cp -r \"C:/Users/Musson/.claude/antigravity-awesome-skills/skills/\"* \"C:/Users/Musson/.claude/skills/\")",
+      "Bash(netstat -ano)",
+      "Bash(find 'c:/Users/Musson/Desktop/Claude Code/screenshot-tool/src-tauri/target' -name *.exe -path */release/*)",
+      "Bash(mkdir -p \"C:/Users/Musson/.gemini/antigravity/skills\")",
+      "Bash(cp -r \"C:/Users/Musson/.claude/antigravity-awesome-skills/skills/\"* \"C:/Users/Musson/.gemini/antigravity/skills/\")",
+      "Bash(cargo tauri:*)",
+      "Bash(tasklist)",
+      "Bash(taskkill //F //PID 87868)",
+      "Bash(ssh-add -l)",
+      "Bash(taskkill //F //IM madera-tools.exe)",
+      "Bash(taskkill //F //IM node.exe)"
+    ]
+  }
+}

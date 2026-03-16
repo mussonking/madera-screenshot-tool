@@ -112,7 +112,41 @@ pub fn get_pixel_color(x: i32, y: i32) -> Option<ColorInfo> {
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        unsafe {
+            let display = x11::xlib::XOpenDisplay(std::ptr::null());
+            if display.is_null() {
+                return None;
+            }
+            let screen = x11::xlib::XDefaultScreen(display);
+            let root = x11::xlib::XRootWindow(display, screen);
+            let image = x11::xlib::XGetImage(
+                display,
+                root,
+                x,
+                y,
+                1,
+                1,
+                x11::xlib::XAllPlanes(),
+                x11::xlib::ZPixmap,
+            );
+            if image.is_null() {
+                x11::xlib::XCloseDisplay(display);
+                return None;
+            }
+            let pixel = x11::xlib::XGetPixel(image, 0, 0);
+            x11::xlib::XDestroyImage(image);
+            x11::xlib::XCloseDisplay(display);
+
+            let r = ((pixel >> 16) & 0xFF) as u8;
+            let g = ((pixel >> 8) & 0xFF) as u8;
+            let b = (pixel & 0xFF) as u8;
+            Some(ColorInfo::from_rgb(r, g, b))
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         None
     }
@@ -159,7 +193,72 @@ pub fn get_magnifier_region(
         }
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "linux")]
+    {
+        unsafe {
+            let display = x11::xlib::XOpenDisplay(std::ptr::null());
+            if display.is_null() {
+                return None;
+            }
+            let screen = x11::xlib::XDefaultScreen(display);
+            let root = x11::xlib::XRootWindow(display, screen);
+
+            let size = radius * 2 + 1;
+            // Get the screen dimensions so we can clamp
+            let screen_width = x11::xlib::XDisplayWidth(display, screen);
+            let screen_height = x11::xlib::XDisplayHeight(display, screen);
+
+            let img_x = (center_x - radius).max(0);
+            let img_y = (center_y - radius).max(0);
+            let img_w = (size as u32).min((screen_width - img_x) as u32);
+            let img_h = (size as u32).min((screen_height - img_y) as u32);
+
+            if img_w == 0 || img_h == 0 {
+                x11::xlib::XCloseDisplay(display);
+                return None;
+            }
+
+            let image = x11::xlib::XGetImage(
+                display,
+                root,
+                img_x,
+                img_y,
+                img_w,
+                img_h,
+                x11::xlib::XAllPlanes(),
+                x11::xlib::ZPixmap,
+            );
+            if image.is_null() {
+                x11::xlib::XCloseDisplay(display);
+                return None;
+            }
+
+            let mut pixels: Vec<Vec<(u8, u8, u8)>> = Vec::with_capacity(size as usize);
+            for dy in -radius..=radius {
+                let mut row: Vec<(u8, u8, u8)> = Vec::with_capacity(size as usize);
+                for dx in -radius..=radius {
+                    let px = center_x + dx - img_x;
+                    let py = center_y + dy - img_y;
+                    if px >= 0 && px < img_w as i32 && py >= 0 && py < img_h as i32 {
+                        let pixel = x11::xlib::XGetPixel(image, px, py);
+                        let r = ((pixel >> 16) & 0xFF) as u8;
+                        let g = ((pixel >> 8) & 0xFF) as u8;
+                        let b = (pixel & 0xFF) as u8;
+                        row.push((r, g, b));
+                    } else {
+                        row.push((0, 0, 0));
+                    }
+                }
+                pixels.push(row);
+            }
+
+            x11::xlib::XDestroyImage(image);
+            x11::xlib::XCloseDisplay(display);
+            Some(pixels)
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
     {
         None
     }

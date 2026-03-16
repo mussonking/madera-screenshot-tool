@@ -62,7 +62,43 @@ impl CaptureManager {
         }
     }
 
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    fn get_cursor_position() -> Option<(i32, i32)> {
+        unsafe {
+            let display = x11::xlib::XOpenDisplay(std::ptr::null());
+            if display.is_null() {
+                return None;
+            }
+            let screen = x11::xlib::XDefaultScreen(display);
+            let root = x11::xlib::XRootWindow(display, screen);
+            let mut root_return = 0u64;
+            let mut child_return = 0u64;
+            let mut root_x = 0i32;
+            let mut root_y = 0i32;
+            let mut win_x = 0i32;
+            let mut win_y = 0i32;
+            let mut mask = 0u32;
+            let result = x11::xlib::XQueryPointer(
+                display,
+                root,
+                &mut root_return,
+                &mut child_return,
+                &mut root_x,
+                &mut root_y,
+                &mut win_x,
+                &mut win_y,
+                &mut mask,
+            );
+            x11::xlib::XCloseDisplay(display);
+            if result != 0 {
+                Some((root_x, root_y))
+            } else {
+                None
+            }
+        }
+    }
+
+    #[cfg(not(any(windows, target_os = "linux")))]
     fn get_cursor_position() -> Option<(i32, i32)> {
         None
     }

@@ -50,7 +50,14 @@ impl SshUploader {
         );
 
         // Run system scp (inherits the native OpenSSH agent automatically)
-        let output = std::process::Command::new("scp")
+        // Use Windows native OpenSSH scp so it can talk to the Windows SSH agent
+        let scp_cmd = if cfg!(target_os = "windows") {
+            r"C:\Windows\System32\OpenSSH\scp.exe"
+        } else {
+            "scp"
+        };
+
+        let output = std::process::Command::new(scp_cmd)
             .arg("-o")
             .arg("StrictHostKeyChecking=no")
             .arg("-o")

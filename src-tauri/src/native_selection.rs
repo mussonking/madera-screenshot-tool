@@ -1,8 +1,11 @@
 //! Native Win32 selection overlay - no WebView, no flash, instant display
 
+#[cfg(windows)]
 use std::sync::mpsc;
+#[cfg(windows)]
 use std::thread;
 use base64::Engine;
+#[cfg(windows)]
 use image::{ImageBuffer, Rgba};
 
 #[cfg(windows)]
@@ -512,6 +515,132 @@ unsafe extern "system" fn window_proc(
 
 #[cfg(not(windows))]
 pub fn show_native_selection() -> Option<SelectionResult> {
-    // Fallback for non-Windows - should not be reached
-    None
+    // Strategy: use slurp (Wayland) or xdotool (X11) for region selection,
+    // then xcap to capture the screen and crop to the selected region.
+    // This avoids depending on grim which may not have screen capture permissions.
+
+    // Try slurp for interactive selection
+    // Returns None if user cancelled (ESC) or slurp is not installed
+    let slurp_available = std::process::Command::new("which")
+        .arg("slurp")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if slurp_available {
+        // slurp is available — use it. If user cancels, return None (don't fallback)
+        return try_slurp_xcap();
+    }
+
+    // Fallback: full screen capture (only if slurp is not installed)
+    try_xcap_fullscreen()
+}
+
+/// Use slurp for interactive region selection, then xcap + crop for the actual capture
+#[cfg(not(windows))]
+fn try_slurp_xcap() -> Option<SelectionResult> {
+    use std::process::Command;
+    use xcap::Monitor;
+
+    // slurp lets user draw a selection rectangle, returns geometry
+    let slurp_output = Command::new("slurp")
+        .arg("-f")
+        .arg("%x %y %w %h")
+        .output()
+        .ok()?;
+
+    if !slurp_output.status.success() {
+        return None; // User cancelled (ESC) or slurp not available
+    }
+
+    let output_str = String::from_utf8_lossy(&slurp_output.stdout).trim().to_string();
+    let vals: Vec<i32> = output_str.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+    if vals.len() != 4 {
+        return None;
+    }
+    let (sel_x, sel_y, sel_w, sel_h) = (vals[0], vals[1], vals[2], vals[3]);
+
+    if sel_w <= 0 || sel_h <= 0 {
+        return None;
+    }
+
+    // Capture the monitor that contains the selection using xcap
+    let monitors = Monitor::all().ok()?;
+
+    // Find which monitor contains the selection center
+    let center_x = sel_x + sel_w / 2;
+    let center_y = sel_y + sel_h / 2;
+
+    let target_monitor = monitors.iter().find(|m| {
+        let mx = m.x();
+        let my = m.y();
+        let mw = m.width() as i32;
+        let mh = m.height() as i32;
+        center_x >= mx && center_x < mx + mw && center_y >= my && center_y < my + mh
+    }).or_else(|| monitors.iter().find(|m| m.is_primary()))
+      .or(monitors.first())?;
+
+    let mon_x = target_monitor.x();
+    let mon_y = target_monitor.y();
+
+    let screen_image = target_monitor.capture_image().ok()?;
+
+    // Crop to selection (coordinates relative to monitor)
+    let crop_x = (sel_x - mon_x).max(0) as u32;
+    let crop_y = (sel_y - mon_y).max(0) as u32;
+    let crop_w = (sel_w as u32).min(screen_image.width().saturating_sub(crop_x));
+    let crop_h = (sel_h as u32).min(screen_image.height().saturating_sub(crop_y));
+
+    if crop_w == 0 || crop_h == 0 {
+        return None;
+    }
+
+    let dynamic_image = image::DynamicImage::ImageRgba8(screen_image);
+    let cropped = dynamic_image.crop_imm(crop_x, crop_y, crop_w, crop_h);
+
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    cropped.write_to(&mut buffer, image::ImageFormat::Png).ok()?;
+
+    let base64_data = base64::engine::general_purpose::STANDARD.encode(buffer.get_ref());
+
+    Some(SelectionResult {
+        x: sel_x,
+        y: sel_y,
+        width: crop_w,
+        height: crop_h,
+        cancelled: false,
+        image_data: Some(base64_data),
+    })
+}
+
+#[cfg(not(windows))]
+fn try_xcap_fullscreen() -> Option<SelectionResult> {
+    use xcap::Monitor;
+
+    let monitors = Monitor::all().ok()?;
+    let primary = monitors
+        .into_iter()
+        .find(|m| m.is_primary())
+        .or_else(|| Monitor::all().ok().and_then(|m| m.into_iter().next()))?;
+
+    let image = primary.capture_image().ok()?;
+    let width = image.width();
+    let height = image.height();
+
+    let dynamic_image = image::DynamicImage::ImageRgba8(image);
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    dynamic_image
+        .write_to(&mut buffer, image::ImageFormat::Png)
+        .ok()?;
+
+    let base64_data = base64::engine::general_purpose::STANDARD.encode(buffer.get_ref());
+
+    Some(SelectionResult {
+        x: 0,
+        y: 0,
+        width,
+        height,
+        cancelled: false,
+        image_data: Some(base64_data),
+    })
 }

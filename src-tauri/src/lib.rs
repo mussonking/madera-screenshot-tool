@@ -157,6 +157,7 @@ async fn upload_to_dev_server(
 }
 
 // Monitor system power events (sleep/wake)
+#[cfg(windows)]
 fn monitor_system_power_events(app: AppHandle) {
     use windows::Win32::System::Power::RegisterPowerSettingNotification;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -287,6 +288,11 @@ fn monitor_system_power_events(app: AppHandle) {
             }
         }
     }
+}
+
+#[cfg(not(windows))]
+fn monitor_system_power_events(_app: AppHandle) {
+    // Power event monitoring is Windows-only; no-op on other platforms.
 }
 
 // Commands
@@ -877,21 +883,29 @@ async fn restore_window_layout(
 /// Get the system idle time in seconds (time since last user input)
 #[tauri::command]
 async fn get_idle_time() -> Result<u64, String> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
 
-    unsafe {
-        let mut last_input = LASTINPUTINFO {
-            cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
-            dwTime: 0,
-        };
+        unsafe {
+            let mut last_input = LASTINPUTINFO {
+                cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
+                dwTime: 0,
+            };
 
-        if GetLastInputInfo(&mut last_input).as_bool() {
-            let tick_count = windows::Win32::System::SystemInformation::GetTickCount();
-            let idle_ms = tick_count.saturating_sub(last_input.dwTime);
-            Ok((idle_ms / 1000) as u64)
-        } else {
-            Err("Failed to get last input info".to_string())
+            if GetLastInputInfo(&mut last_input).as_bool() {
+                let tick_count = windows::Win32::System::SystemInformation::GetTickCount();
+                let idle_ms = tick_count.saturating_sub(last_input.dwTime);
+                Ok((idle_ms / 1000) as u64)
+            } else {
+                Err("Failed to get last input info".to_string())
+            }
         }
+    }
+
+    #[cfg(not(windows))]
+    {
+        Ok(0)
     }
 }
 
@@ -1019,23 +1033,39 @@ fn open_editor_window(
 
     // Get Work Area (Screen - Taskbar)
     let (work_x, work_y, work_w, work_h) = {
-        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-        use windows::Win32::Graphics::Gdi::{MonitorFromPoint, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
-        use windows::Win32::Foundation::POINT;
+        #[cfg(windows)]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+            use windows::Win32::Graphics::Gdi::{MonitorFromPoint, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+            use windows::Win32::Foundation::POINT;
 
-        unsafe {
-            let mut point = POINT::default();
-            let _ = GetCursorPos(&mut point);
-            
-            let hmonitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
-            let mut monitor_info = MONITORINFO {
-                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-                ..Default::default()
-            };
+            unsafe {
+                let mut point = POINT::default();
+                let _ = GetCursorPos(&mut point);
 
-            if GetMonitorInfoW(hmonitor, &mut monitor_info).as_bool() {
-                let rc = monitor_info.rcWork;
-                (rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top)
+                let hmonitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+                let mut monitor_info = MONITORINFO {
+                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
+
+                if GetMonitorInfoW(hmonitor, &mut monitor_info).as_bool() {
+                    let rc = monitor_info.rcWork;
+                    (rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top)
+                } else {
+                    (0, 0, 1920, 1080)
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            // Use xcap to get primary monitor dimensions
+            if let Ok(monitors) = xcap::Monitor::all() {
+                if let Some(m) = monitors.iter().find(|m| m.is_primary()).or(monitors.first()) {
+                    (m.x(), m.y(), m.width() as i32, m.height() as i32)
+                } else {
+                    (0, 0, 1920, 1080)
+                }
             } else {
                 (0, 0, 1920, 1080)
             }
@@ -1238,12 +1268,14 @@ async fn open_settings_panel(app: AppHandle) -> Result<(), String> {
 }
 
 fn open_multi_paste_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
-
-    // Save the current foreground window BEFORE opening popup (atomic, lock-free)
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        PREVIOUS_FOREGROUND_WINDOW.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
+    // Save the current foreground window BEFORE opening popup
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            PREVIOUS_FOREGROUND_WINDOW.store(hwnd.0 as isize, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     // Close existing if any
@@ -1377,14 +1409,17 @@ async fn paste_snippet_item(app: AppHandle, item_id: String) -> Result<(), Strin
     copy_result?;
 
     std::thread::spawn(|| {
-        use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
-        use windows::Win32::Foundation::HWND;
+        #[cfg(windows)]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+            use windows::Win32::Foundation::HWND;
 
-        let hwnd_val = PREVIOUS_FOREGROUND_WINDOW.load(std::sync::atomic::Ordering::Relaxed);
-        if hwnd_val != 0 {
-            unsafe {
-                let hwnd = HWND(hwnd_val as *mut _);
-                let _ = SetForegroundWindow(hwnd);
+            let hwnd_val = PREVIOUS_FOREGROUND_WINDOW.load(std::sync::atomic::Ordering::Relaxed);
+            if hwnd_val != 0 {
+                unsafe {
+                    let hwnd = HWND(hwnd_val as *mut _);
+                    let _ = SetForegroundWindow(hwnd);
+                }
             }
         }
 
@@ -1425,36 +1460,95 @@ async fn copy_snippet_to_clipboard(app: AppHandle, item_id: String) -> Result<()
 }
 
 fn get_cursor_and_monitor_info() -> (i32, i32, i32, i32, i32, i32) {
-    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-    use windows::Win32::Graphics::Gdi::{MonitorFromPoint, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
-    use windows::Win32::Foundation::POINT;
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        use windows::Win32::Graphics::Gdi::{MonitorFromPoint, GetMonitorInfoW, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+        use windows::Win32::Foundation::POINT;
 
-    unsafe {
-        let mut point = POINT::default();
-        if GetCursorPos(&mut point).is_ok() {
-            // Get the monitor that contains the cursor
-            let hmonitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
-            let mut monitor_info = MONITORINFO {
-                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-                ..Default::default()
-            };
+        unsafe {
+            let mut point = POINT::default();
+            if GetCursorPos(&mut point).is_ok() {
+                let hmonitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+                let mut monitor_info = MONITORINFO {
+                    cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+                    ..Default::default()
+                };
 
-            if GetMonitorInfoW(hmonitor, &mut monitor_info).as_bool() {
-                let rc = monitor_info.rcMonitor;
-                return (
-                    point.x,
-                    point.y,
-                    rc.left,
-                    rc.top,
-                    rc.right - rc.left,
-                    rc.bottom - rc.top,
-                );
+                if GetMonitorInfoW(hmonitor, &mut monitor_info).as_bool() {
+                    let rc = monitor_info.rcMonitor;
+                    return (
+                        point.x,
+                        point.y,
+                        rc.left,
+                        rc.top,
+                        rc.right - rc.left,
+                        rc.bottom - rc.top,
+                    );
+                }
+
+                (point.x, point.y, 0, 0, 1920, 1080)
+            } else {
+                (100, 100, 0, 0, 1920, 1080)
             }
-
-            (point.x, point.y, 0, 0, 1920, 1080)
-        } else {
-            (100, 100, 0, 0, 1920, 1080)
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Use X11 to get cursor position, fall back to xcap for monitor info
+        let (cursor_x, cursor_y) = unsafe {
+            let display = x11::xlib::XOpenDisplay(std::ptr::null());
+            if display.is_null() {
+                (100, 100)
+            } else {
+                let screen = x11::xlib::XDefaultScreen(display);
+                let root = x11::xlib::XRootWindow(display, screen);
+                let mut root_return = 0u64;
+                let mut child_return = 0u64;
+                let mut root_x = 0i32;
+                let mut root_y = 0i32;
+                let mut win_x = 0i32;
+                let mut win_y = 0i32;
+                let mut mask = 0u32;
+                let result = x11::xlib::XQueryPointer(
+                    display, root,
+                    &mut root_return, &mut child_return,
+                    &mut root_x, &mut root_y,
+                    &mut win_x, &mut win_y, &mut mask,
+                );
+                x11::xlib::XCloseDisplay(display);
+                if result != 0 {
+                    (root_x, root_y)
+                } else {
+                    (100, 100)
+                }
+            }
+        };
+
+        // Try to get monitor info from xcap
+        if let Ok(monitors) = xcap::Monitor::all() {
+            for m in &monitors {
+                let mx = m.x();
+                let my = m.y();
+                let mw = m.width() as i32;
+                let mh = m.height() as i32;
+                if cursor_x >= mx && cursor_x < mx + mw && cursor_y >= my && cursor_y < my + mh {
+                    return (cursor_x, cursor_y, mx, my, mw, mh);
+                }
+            }
+            // Fallback to first monitor
+            if let Some(m) = monitors.first() {
+                return (cursor_x, cursor_y, m.x(), m.y(), m.width() as i32, m.height() as i32);
+            }
+        }
+
+        (cursor_x, cursor_y, 0, 0, 1920, 1080)
+    }
+
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        (100, 100, 0, 0, 1920, 1080)
     }
 }
 
@@ -1521,21 +1615,21 @@ async fn paste_history_item(app: AppHandle, item_id: String) -> Result<(), Strin
     // Auto-paste: restore focus to previous window and simulate Ctrl+V
     // Keep popup open so user can paste multiple items
     std::thread::spawn(|| {
-        use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
-        use windows::Win32::Foundation::HWND;
+        #[cfg(windows)]
+        {
+            use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+            use windows::Win32::Foundation::HWND;
 
-        // Get the saved previous window (atomic, lock-free)
-        let hwnd_val = PREVIOUS_FOREGROUND_WINDOW.load(std::sync::atomic::Ordering::Relaxed);
+            let hwnd_val = PREVIOUS_FOREGROUND_WINDOW.load(std::sync::atomic::Ordering::Relaxed);
 
-        if hwnd_val != 0 {
-            unsafe {
-                // Restore focus to the previous window
-                let hwnd = HWND(hwnd_val as *mut _);
-                let _ = SetForegroundWindow(hwnd);
+            if hwnd_val != 0 {
+                unsafe {
+                    let hwnd = HWND(hwnd_val as *mut _);
+                    let _ = SetForegroundWindow(hwnd);
+                }
             }
         }
 
-        // Small delay to ensure focus is restored and clipboard is ready
         std::thread::sleep(std::time::Duration::from_millis(100));
         simulate_paste();
     });
@@ -1590,12 +1684,17 @@ async fn copy_history_item_to_clipboard(app: AppHandle, item_id: String) -> Resu
 }
 
 // Global state for keyboard hook - using atomics for lock-free performance
+#[cfg(windows)]
 static PASTE_HOOK_APP: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 // Store last V press time as milliseconds (0 = never pressed)
+#[cfg(windows)]
 static LAST_V_PRESS_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(windows)]
 static CTRL_HELD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[allow(dead_code)]
 static PREVIOUS_FOREGROUND_WINDOW: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
 
+#[cfg(windows)]
 fn start_paste_hook(app: AppHandle) {
     use windows::Win32::UI::WindowsAndMessaging::{
         SetWindowsHookExW, CallNextHookEx, GetMessageW, WH_KEYBOARD_LL, KBDLLHOOKSTRUCT, MSG,
@@ -1733,6 +1832,12 @@ fn start_paste_hook(app: AppHandle) {
     });
 }
 
+#[cfg(not(windows))]
+fn start_paste_hook(_app: AppHandle) {
+    // Keyboard hooks are Windows-only; no-op on other platforms.
+}
+
+#[cfg(windows)]
 fn simulate_paste() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL, VK_V,
@@ -1798,6 +1903,15 @@ fn simulate_paste() {
     }
 }
 
+#[cfg(not(windows))]
+fn simulate_paste() {
+    // Use xdotool to simulate Ctrl+V on Linux
+    let _ = std::process::Command::new("xdotool")
+        .args(["key", "ctrl+v"])
+        .spawn();
+}
+
+#[cfg(windows)]
 fn simulate_tabby_breakline() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_MENU, VK_RETURN,
@@ -1863,6 +1977,12 @@ fn simulate_tabby_breakline() {
 
         SendInput(&inputs, std::mem::size_of::<INPUT>() as i32);
     }
+}
+
+#[cfg(not(windows))]
+#[allow(dead_code)]
+fn simulate_tabby_breakline() {
+    // Tabby terminal macro is Windows-only; no-op on other platforms.
 }
 
 /// Settings for Desktop Guardian auto-save
@@ -2014,12 +2134,31 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .plugin(tauri_plugin_store::Builder::default().build())
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // When a second instance is launched, just focus existing window or show tray notification
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_focus();
-            } else {
-                let _ = open_main_window(app);
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // Check CLI arguments for action commands (used by COSMIC/Wayland shortcuts)
+            let action = args.iter().find_map(|a| {
+                match a.as_str() {
+                    "--capture" => Some("capture"),
+                    "--history" => Some("history"),
+                    "--colorpicker" => Some("colorpicker"),
+                    "--quickpaste" => Some("quickpaste"),
+                    _ => None,
+                }
+            });
+
+            match action {
+                Some("capture") => { let _ = open_selection_window(app); },
+                Some("history") => { let _ = open_history_window(app); },
+                Some("colorpicker") => { let _ = open_color_picker_window(app); },
+                Some("quickpaste") => { let _ = open_multi_paste_window(app); },
+                _ => {
+                    // No action flag: just focus existing window
+                    if let Some(window) = app.get_webview_window("main") {
+                        let _ = window.set_focus();
+                    } else {
+                        let _ = open_main_window(app);
+                    }
+                }
             }
         }))
         .manage(AppState {
@@ -2038,12 +2177,13 @@ pub fn run() {
             snippet_manager: Arc::new(SnippetManager::new().expect("Failed to init snippet manager")),
         })
         .setup(|app| {
-            // --- Background Focus Tracker ---
+            // --- Background Focus Tracker (Windows only) ---
             // Continuously tracks the last active window that does NOT belong to Madera Tools
+            #[cfg(windows)]
             std::thread::spawn(|| {
                 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowThreadProcessId};
                 use windows::Win32::System::Threading::GetCurrentProcessId;
-                
+
                 let my_pid = unsafe { GetCurrentProcessId() };
                 loop {
                     unsafe {
@@ -2100,7 +2240,8 @@ pub fn run() {
             let quick_paste = MenuItem::with_id(app, "quick_paste", "⭐ Quick Paste", true, None::<&str>)?;
             let restore_layout = MenuItem::with_id(app, "restore_layout", "⚡ Restore Last Layout", true, None::<&str>)?;
             let clipboard_monitor = CheckMenuItem::with_id(app, "clipboard_monitor", "Clipboard Monitoring", true, true, None::<&str>)?;
-            let autostart = CheckMenuItem::with_id(app, "autostart", "Start with Windows", true, autostart_enabled, None::<&str>)?;
+            let autostart_label = if cfg!(windows) { "Start with Windows" } else { "Start at Login" };
+            let autostart = CheckMenuItem::with_id(app, "autostart", autostart_label, true, autostart_enabled, None::<&str>)?;
             let guardian_auto_save = CheckMenuItem::with_id(app, "guardian_auto_save", "Desktop Guardian", true, guardian_auto_save_enabled, None::<&str>)?;
             let menu = Menu::with_items(app, &[&capture, &colorpicker, &history, &quick_paste, &settings_panel, &desktop_guardian, &restore_layout, &clipboard_monitor, &guardian_auto_save, &autostart, &quit])?;
 
@@ -2285,8 +2426,9 @@ pub fn run() {
                     }
 
 
-                    // FAIL-SAFE: Check for user activity
+                    // FAIL-SAFE: Check for user activity (Windows only)
                     // If the system thinks it's sleeping but the user is active, we missed a wake event!
+                    #[cfg(windows)]
                     unsafe {
                         use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
                         use windows::Win32::System::SystemInformation::GetTickCount;
@@ -2299,7 +2441,7 @@ pub fn run() {
                         if GetLastInputInfo(&mut last_input).as_bool() {
                             let tick_count = GetTickCount();
                             let idle_ms = tick_count.saturating_sub(last_input.dwTime);
-                            
+
                             // If user has been active in the last minute (60000ms)
                             if idle_ms < 60000 {
                                 // And we think we are sleeping...
@@ -2445,6 +2587,35 @@ pub fn run() {
                     });
                 }
             });
+
+            // Handle CLI action flags on first launch (e.g. `madera-tools --capture`)
+            let cli_args: Vec<String> = std::env::args().collect();
+            if cli_args.iter().any(|a| a == "--capture") {
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Small delay to let the app finish initializing
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let _ = open_selection_window(&h);
+                });
+            } else if cli_args.iter().any(|a| a == "--history") {
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let _ = open_history_window(&h);
+                });
+            } else if cli_args.iter().any(|a| a == "--colorpicker") {
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let _ = open_color_picker_window(&h);
+                });
+            } else if cli_args.iter().any(|a| a == "--quickpaste") {
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let _ = open_multi_paste_window(&h);
+                });
+            }
 
             Ok(())
         })
