@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Camera, Palette, Shield, LayoutDashboard, Settings, Copy } from 'lucide-react';
+import { Camera, Palette, Shield, LayoutDashboard, Settings, Copy, Clipboard } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import History from './History';
 import SettingsModal from './SettingsModal';
@@ -37,6 +37,12 @@ export default function Dashboard() {
     {
       id: 'quick-paste',
       name: 'Quick Paste',
+      icon: Clipboard,
+      action: () => invoke('open_multi_paste_panel'),
+    },
+    {
+      id: 'prompt-snippets',
+      name: 'Prompt Snippets',
       icon: Copy,
       action: () => invoke('open_quick_paste_panel'),
     },

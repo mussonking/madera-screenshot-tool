@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow, LogicalPosition } from "@tauri-apps/api/window";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { format, parseISO } from "date-fns";
-import { GripHorizontal } from "lucide-react";
+import { GripHorizontal, ArrowLeftRight, Monitor } from "lucide-react";
 import {
   Image,
   FileText,
@@ -24,10 +24,6 @@ const MultiPaster = () => {
   const [hasMore, setHasMore] = useState(true);
   const LIMIT = 15;
 
-  // Drag state
-  const isDragging = useRef(false);
-  const dragStart = useRef({ x: 0, y: 0 });
-  const windowStart = useRef({ x: 0, y: 0 });
 
   const loadHistory = useCallback(async (reset = false) => {
     if (reset) setLoading(true);
@@ -107,47 +103,10 @@ const MultiPaster = () => {
     }
   };
 
-  // Manual drag implementation
   const handleDragStart = async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('button')) return;
-
-    isDragging.current = true;
-    dragStart.current = { x: e.screenX, y: e.screenY };
-
-    try {
-      const win = getCurrentWindow();
-      const pos = await win.outerPosition();
-      windowStart.current = { x: pos.x, y: pos.y };
-    } catch {
-      windowStart.current = { x: 0, y: 0 };
-    }
-
-    document.addEventListener('mousemove', handleDragMove);
-    document.addEventListener('mouseup', handleDragEnd);
-  };
-
-  const handleDragMove = async (e: MouseEvent) => {
-    if (!isDragging.current) return;
-
-    const deltaX = e.screenX - dragStart.current.x;
-    const deltaY = e.screenY - dragStart.current.y;
-
-    try {
-      const win = getCurrentWindow();
-      await win.setPosition(new LogicalPosition(
-        windowStart.current.x + deltaX,
-        windowStart.current.y + deltaY
-      ));
-    } catch (error) {
-      console.error("Failed to move window:", error);
-    }
-  };
-
-  const handleDragEnd = () => {
-    isDragging.current = false;
-    document.removeEventListener('mousemove', handleDragMove);
-    document.removeEventListener('mouseup', handleDragEnd);
+    await getCurrentWindow().startDragging();
   };
 
   const getItemIcon = (type: string) => {
@@ -226,12 +185,28 @@ const MultiPaster = () => {
           <Clipboard size={16} className="text-[#e94560]" />
           <span className="text-gray-200 text-sm font-medium">Quick Paste</span>
         </div>
-        <button
-          onClick={closeWindow}
-          className="text-gray-400 hover:text-white p-1 rounded hover:bg-[#0f3460] transition-colors"
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => invoke('toggle_panel_side', { windowLabel: 'multipaste' })}
+            className="text-gray-400 hover:text-white p-1 rounded hover:bg-[#0f3460] transition-colors"
+            title="Move left/right"
+          >
+            <ArrowLeftRight size={14} />
+          </button>
+          <button
+            onClick={() => invoke('toggle_panel_monitor', { windowLabel: 'multipaste' })}
+            className="text-gray-400 hover:text-white p-1 rounded hover:bg-[#0f3460] transition-colors"
+            title="Move to next monitor"
+          >
+            <Monitor size={14} />
+          </button>
+          <button
+            onClick={closeWindow}
+            className="text-gray-400 hover:text-white p-1 rounded hover:bg-[#0f3460] transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Content */}

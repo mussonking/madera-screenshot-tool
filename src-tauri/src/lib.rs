@@ -31,6 +31,30 @@ use tauri::{
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+/// Apply wlr-layer-shell overlay to a Tauri window (Wayland always-on-top).
+/// Must be called BEFORE the GTK window is realized (i.e. before .show()).
+/// Runs on the main thread as required by GTK.
+#[cfg(target_os = "linux")]
+fn apply_layer_shell_overlay(window: &tauri::WebviewWindow, width: i32) {
+    let window_clone = window.clone();
+    let _ = window.run_on_main_thread(move || {
+        if let Ok(gtk_win) = window_clone.gtk_window() {
+            use gtk::prelude::*;
+            use gtk_layer_shell::LayerShell;
+            let w = gtk_win.upcast_ref::<gtk::Window>();
+            w.init_layer_shell();
+            w.set_layer(gtk_layer_shell::Layer::Overlay);
+            w.set_anchor(gtk_layer_shell::Edge::Top, true);
+            w.set_anchor(gtk_layer_shell::Edge::Bottom, true);
+            w.set_anchor(gtk_layer_shell::Edge::Right, true);
+            w.set_anchor(gtk_layer_shell::Edge::Left, false);
+            w.set_namespace("madera-tools-overlay");
+            w.set_keyboard_interactivity(false);
+            gtk_win.set_size_request(width, -1);
+        }
+    });
+}
+
 pub struct AppState {
     pub capture_manager: Mutex<CaptureManager>,
     pub clipboard_manager: Mutex<ClipboardManager>,
@@ -1305,13 +1329,17 @@ fn open_multi_paste_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Er
         .title("Quick Paste")
         .inner_size(window_width, window_height)
         .position(pos_x, pos_y)
-        .resizable(false)
+        .resizable(true)
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
-        .focused(true)
+        .visible(false)
         .build()?;
 
+    #[cfg(target_os = "linux")]
+    apply_layer_shell_overlay(&window, 400);
+
+    window.show().map_err(|e| e.to_string())?;
     window.set_focus()?;
 
     // Mark window as open
@@ -1328,36 +1356,92 @@ async fn open_quick_paste_panel(app: tauri::AppHandle) -> Result<(), String> {
     open_quick_paste_window(&app)
 }
 
+/// Toggle layer-shell anchor between left and right for a given window
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn toggle_panel_side(app: AppHandle, window_label: String) -> Result<String, String> {
+    let window = app.get_webview_window(&window_label)
+        .ok_or("Window not found")?;
+    let win = window.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    window.run_on_main_thread(move || {
+        if let Ok(gtk_win) = win.gtk_window() {
+            use gtk::prelude::*;
+            use gtk_layer_shell::LayerShell;
+            let w = gtk_win.upcast_ref::<gtk::Window>();
+            let is_right = w.is_anchor(gtk_layer_shell::Edge::Right);
+            w.set_anchor(gtk_layer_shell::Edge::Right, !is_right);
+            w.set_anchor(gtk_layer_shell::Edge::Left, is_right);
+            let _ = tx.send(if is_right { "left" } else { "right" });
+        }
+    }).map_err(|e| e.to_string())?;
+    rx.recv().map(|s| s.to_string()).map_err(|e| e.to_string())
+}
+
+/// Cycle layer-shell monitor for a given window
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn toggle_panel_monitor(app: AppHandle, window_label: String) -> Result<(), String> {
+    let window = app.get_webview_window(&window_label)
+        .ok_or("Window not found")?;
+    let win = window.clone();
+    window.run_on_main_thread(move || {
+        if let Ok(gtk_win) = win.gtk_window() {
+            use gtk::prelude::*;
+            use gtk_layer_shell::LayerShell;
+            let w = gtk_win.upcast_ref::<gtk::Window>();
+            let display = match gdk::Display::default() {
+                Some(d) => d,
+                None => return,
+            };
+            let n = display.n_monitors();
+            if n <= 1 { return; }
+            let current = w.monitor();
+            let mut next_idx: i32 = 0;
+            if let Some(ref cur) = current {
+                for i in 0..n {
+                    if display.monitor(i).as_ref() == Some(cur) {
+                        next_idx = (i + 1) % n;
+                        break;
+                    }
+                }
+            }
+            if let Some(next_mon) = display.monitor(next_idx) {
+                w.set_monitor(&next_mon);
+            }
+        }
+    }).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn open_quick_paste_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("quickpaste") {
         window.close().map_err(|e| e.to_string())?;
     }
 
-    let (cursor_x, cursor_y, monitor_x, monitor_y, monitor_w, monitor_h) = get_cursor_and_monitor_info();
-    let window_height = 500.0;
+    let (cursor_x, _cursor_y, monitor_x, monitor_y, monitor_w, monitor_h) = get_cursor_and_monitor_info();
+    let window_height = monitor_h as f64;
     let window_width = 400.0;
 
     let mut pos_x = cursor_x as f64 - window_width / 2.0;
-    let mut pos_y = cursor_y as f64 - window_height - 20.0;
-
     pos_x = pos_x.max(monitor_x as f64).min((monitor_x + monitor_w) as f64 - window_width);
-    pos_y = pos_y.max(monitor_y as f64).min((monitor_y + monitor_h) as f64 - window_height);
-
-    if pos_y < monitor_y as f64 + 50.0 {
-        pos_y = cursor_y as f64 + 20.0;
-    }
+    let pos_y = monitor_y as f64;
 
     let window = WebviewWindowBuilder::new(app, "quickpaste", WebviewUrl::App("index.html#quickpaste".into()))
-        .title("Quick Paste Snippets")
+        .title("Quick Prompt Snippets")
         .inner_size(window_width, window_height)
         .position(pos_x, pos_y)
-        .resizable(false)
+        .resizable(true)
         .decorations(false)
         .always_on_top(true)
         .skip_taskbar(true)
-        .focused(true)
+        .visible(false)
         .build().map_err(|e| e.to_string())?;
 
+    #[cfg(target_os = "linux")]
+    apply_layer_shell_overlay(&window, 400);
+
+    window.show().map_err(|e| e.to_string())?;
     window.set_focus().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -1408,7 +1492,9 @@ async fn paste_snippet_item(app: AppHandle, item_id: String) -> Result<(), Strin
     state.clipboard_monitor.resume();
     copy_result?;
 
-    std::thread::spawn(|| {
+    let content = snippet.content.clone();
+    let is_text = snippet.content_type == "text";
+    std::thread::spawn(move || {
         #[cfg(windows)]
         {
             use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
@@ -1424,6 +1510,13 @@ async fn paste_snippet_item(app: AppHandle, item_id: String) -> Result<(), Strin
         }
 
         std::thread::sleep(std::time::Duration::from_millis(100));
+        #[cfg(not(windows))]
+        if is_text {
+            type_text(&content);
+        } else {
+            simulate_paste();
+        }
+        #[cfg(windows)]
         simulate_paste();
     });
 
@@ -1905,10 +1998,33 @@ fn simulate_paste() {
 
 #[cfg(not(windows))]
 fn simulate_paste() {
-    // Use xdotool to simulate Ctrl+V on Linux
-    let _ = std::process::Command::new("xdotool")
-        .args(["key", "ctrl+v"])
+    // Try wtype first (Wayland native), fall back to xdotool (X11)
+    let wtype = std::process::Command::new("wtype")
+        .args(["-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"])
         .spawn();
+    if wtype.is_err() {
+        let _ = std::process::Command::new("xdotool")
+            .args(["key", "ctrl+v"])
+            .spawn();
+    }
+}
+
+#[cfg(not(windows))]
+fn type_text(text: &str) {
+    // Strip Windows \r line endings to avoid extra Enter keypresses
+    let clean = text.replace('\r', "");
+    let text = clean.as_str();
+    // Type text directly via wtype (works on Wayland regardless of app's paste shortcut)
+    let wtype = std::process::Command::new("wtype")
+        .arg("--")
+        .arg(text)
+        .spawn();
+    if wtype.is_err() {
+        // Fallback: use xdotool type for X11
+        let _ = std::process::Command::new("xdotool")
+            .args(["type", "--clearmodifiers", "--", text])
+            .spawn();
+    }
 }
 
 #[cfg(windows)]
@@ -2142,6 +2258,7 @@ pub fn run() {
                     "--history" => Some("history"),
                     "--colorpicker" => Some("colorpicker"),
                     "--quickpaste" => Some("quickpaste"),
+                    "--snippets" => Some("snippets"),
                     _ => None,
                 }
             });
@@ -2151,6 +2268,7 @@ pub fn run() {
                 Some("history") => { let _ = open_history_window(app); },
                 Some("colorpicker") => { let _ = open_color_picker_window(app); },
                 Some("quickpaste") => { let _ = open_multi_paste_window(app); },
+                Some("snippets") => { let _ = open_quick_paste_window(app); },
                 _ => {
                     // No action flag: just focus existing window
                     if let Some(window) = app.get_webview_window("main") {
@@ -2237,7 +2355,7 @@ pub fn run() {
             let history = MenuItem::with_id(app, "history", "History (Ctrl+Shift+H)", true, None::<&str>)?;
             let settings_panel = MenuItem::with_id(app, "settings_panel", "⚙️ Settings", true, None::<&str>)?;
             let desktop_guardian = MenuItem::with_id(app, "desktop_guardian", "Desktop Guardian", true, None::<&str>)?;
-            let quick_paste = MenuItem::with_id(app, "quick_paste", "⭐ Quick Paste", true, None::<&str>)?;
+            let quick_paste = MenuItem::with_id(app, "quick_paste", "⭐ Quick Prompt Snippets", true, None::<&str>)?;
             let restore_layout = MenuItem::with_id(app, "restore_layout", "⚡ Restore Last Layout", true, None::<&str>)?;
             let clipboard_monitor = CheckMenuItem::with_id(app, "clipboard_monitor", "Clipboard Monitoring", true, true, None::<&str>)?;
             let autostart_label = if cfg!(windows) { "Start with Windows" } else { "Start at Login" };
@@ -2615,6 +2733,12 @@ pub fn run() {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     let _ = open_multi_paste_window(&h);
                 });
+            } else if cli_args.iter().any(|a| a == "--snippets") {
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let _ = open_quick_paste_window(&h);
+                });
             }
 
             Ok(())
@@ -2686,6 +2810,8 @@ pub fn run() {
             paste_snippet_item,
             copy_snippet_to_clipboard,
             open_quick_paste_panel,
+            toggle_panel_side,
+            toggle_panel_monitor,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

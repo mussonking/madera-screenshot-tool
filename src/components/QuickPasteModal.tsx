@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow, LogicalPosition } from "@tauri-apps/api/window";
-import { GripHorizontal, X, FileText, Image, PenLine, Trash2, Copy, Check } from "lucide-react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { GripHorizontal, X, FileText, Image, PenLine, Trash2, Copy, Check, ArrowLeftRight, Monitor } from "lucide-react";
 import { THEMES, ThemeName, loadThemeFromStore } from "../utils/theme";
 
 export interface SnippetItem {
@@ -18,10 +18,6 @@ const QuickPasteModal = () => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [currentTheme, setCurrentTheme] = useState<ThemeName>("default");
 
-  // Drag state
-  const isDragging = useRef(false);
-  const dragStart = useRef({ x: 0, y: 0 });
-  const windowStart = useRef({ x: 0, y: 0 });
   const isPasting = useRef(false);
 
   const loadSnippets = useCallback(async () => {
@@ -166,47 +162,10 @@ const QuickPasteModal = () => {
     }
   };
 
-  // Drag handlers
   const handleDragStart = async (e: React.MouseEvent) => {
     if (e.button !== 0) return;
     if ((e.target as HTMLElement).closest('button')) return;
-
-    isDragging.current = true;
-    dragStart.current = { x: e.screenX, y: e.screenY };
-
-    try {
-      const win = getCurrentWindow();
-      const pos = await win.outerPosition();
-      windowStart.current = { x: pos.x, y: pos.y };
-    } catch {
-      windowStart.current = { x: 0, y: 0 };
-    }
-
-    document.addEventListener('mousemove', handleDragMove);
-    document.addEventListener('mouseup', handleDragEnd);
-  };
-
-  const handleDragMove = async (e: MouseEvent) => {
-    if (!isDragging.current) return;
-
-    const deltaX = e.screenX - dragStart.current.x;
-    const deltaY = e.screenY - dragStart.current.y;
-
-    try {
-      const win = getCurrentWindow();
-      await win.setPosition(new LogicalPosition(
-        windowStart.current.x + deltaX,
-        windowStart.current.y + deltaY
-      ));
-    } catch (error) {
-      console.error("Failed to move window:", error);
-    }
-  };
-
-  const handleDragEnd = () => {
-    isDragging.current = false;
-    document.removeEventListener('mousemove', handleDragMove);
-    document.removeEventListener('mouseup', handleDragEnd);
+    await getCurrentWindow().startDragging();
   };
 
   const theme = THEMES[currentTheme];
@@ -233,17 +192,39 @@ const QuickPasteModal = () => {
         <div className="flex items-center gap-2">
           <GripHorizontal size={16} style={{ color: theme.textColor, opacity: 0.5 }} />
           <Copy size={16} style={{ color: theme.accentColor }} />
-          <span className="text-sm font-medium" style={{ color: theme.textColor }}>Quick Paste Snippets</span>
+          <span className="text-sm font-medium" style={{ color: theme.textColor }}>Quick Prompt Snippets</span>
         </div>
-        <button
-          onClick={closeWindow}
-          className="p-1 rounded transition-colors hover:opacity-80"
-          style={{ color: theme.textColor, backgroundColor: 'transparent' }}
-          onMouseOver={(e) => e.currentTarget.style.backgroundColor = theme.buttonBg}
-          onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
-        >
-          <X size={14} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => invoke('toggle_panel_side', { windowLabel: 'quickpaste' })}
+            className="p-1 rounded transition-colors hover:opacity-80"
+            style={{ color: theme.textColor, backgroundColor: 'transparent' }}
+            onMouseOver={(e) => e.currentTarget.style.backgroundColor = theme.buttonBg}
+            onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            title="Move left/right"
+          >
+            <ArrowLeftRight size={14} />
+          </button>
+          <button
+            onClick={() => invoke('toggle_panel_monitor', { windowLabel: 'quickpaste' })}
+            className="p-1 rounded transition-colors hover:opacity-80"
+            style={{ color: theme.textColor, backgroundColor: 'transparent' }}
+            onMouseOver={(e) => e.currentTarget.style.backgroundColor = theme.buttonBg}
+            onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+            title="Move to next monitor"
+          >
+            <Monitor size={14} />
+          </button>
+          <button
+            onClick={closeWindow}
+            className="p-1 rounded transition-colors hover:opacity-80"
+            style={{ color: theme.textColor, backgroundColor: 'transparent' }}
+            onMouseOver={(e) => e.currentTarget.style.backgroundColor = theme.buttonBg}
+            onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'transparent'}
+          >
+            <X size={14} />
+          </button>
+        </div>
       </div>
 
       {/* Content */}
@@ -267,6 +248,7 @@ const QuickPasteModal = () => {
                 key={snippet.id}
                 onClick={() => handleCopyAndPaste(snippet.id)}
                 onContextMenu={(e) => handleCopyToClipboard(e, snippet.id)}
+                title={snippet.content_type === "text" ? snippet.content : snippet.title}
                 className="w-full px-3 py-2 flex flex-col gap-1 border-b transition-all text-left cursor-pointer group hover:opacity-80"
                 style={{
                   borderColor: theme.toolbarBorder,
