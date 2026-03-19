@@ -221,9 +221,9 @@ MIT
 ---
 
 <p align="center">
-  Built with too much coffee by <a href="https://github.com/mussonking">Marc-Antoine Du Moulin</a>
+  Built with too much coffee by <a href="https://github.com/mussonking">@mussonking</a> and <a href="https://claude.ai/code">Claude Code</a> (Opus 4.6)
   <br />
-  Founder of <a href="https://leclasseur.ca">Le Classeur</a> -- AI-powered document management from Montreal, QC
+  <sub>Entirely vibe-coded with AI. Every line, every commit, every debug session -- human + Claude pair programming.</sub>
   <br />
   <sub>Powered by <a href="https://tauri.app">Tauri 2</a> -- because Electron was never the answer.</sub>
 </p>
