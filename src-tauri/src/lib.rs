@@ -1115,11 +1115,15 @@ fn open_editor_window(
         .decorations(true)
         .build()?;
 
-    // Manually center to ensure we are in the work area
-    // (native .center() sometimes considers full screen, not work area)
+    // Force size via Physical pixels (Wayland compositors may ignore inner_size)
+    window.set_size(tauri::Size::Physical(tauri::PhysicalSize {
+        width: window_width as u32,
+        height: window_height as u32,
+    }))?;
+
+    // Center in work area
     let pos_x = work_x as f64 + (work_w as f64 - window_width) / 2.0;
     let pos_y = work_y as f64 + (work_h as f64 - window_height) / 2.0;
-    
     window.set_position(tauri::Position::Physical(tauri::PhysicalPosition {
         x: pos_x as i32,
         y: pos_y as i32,
@@ -1414,6 +1418,29 @@ async fn toggle_panel_monitor(app: AppHandle, window_label: String) -> Result<()
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+#[tauri::command]
+async fn set_panel_keyboard(app: AppHandle, window_label: String, enabled: bool) -> Result<(), String> {
+    let window = app.get_webview_window(&window_label)
+        .ok_or("Window not found")?;
+    let win = window.clone();
+    window.run_on_main_thread(move || {
+        if let Ok(gtk_win) = win.gtk_window() {
+            use gtk::prelude::*;
+            use gtk_layer_shell::LayerShell;
+            let w = gtk_win.upcast_ref::<gtk::Window>();
+            w.set_keyboard_interactivity(enabled);
+        }
+    }).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+async fn set_panel_keyboard(_app: AppHandle, _window_label: String, _enabled: bool) -> Result<(), String> {
+    Ok(())
+}
+
 fn open_quick_paste_window(app: &tauri::AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("quickpaste") {
         window.close().map_err(|e| e.to_string())?;
@@ -1457,6 +1484,24 @@ async fn add_snippet(state: State<'_, AppState>, title: String, content_type: St
 }
 
 #[tauri::command]
+async fn add_snippet_from_clipboard(state: State<'_, AppState>) -> Result<SnippetItem, String> {
+    let text = {
+        let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+        clipboard.get_text().map_err(|e| e.to_string())?
+    };
+    if text.trim().is_empty() {
+        return Err("Clipboard is empty".to_string());
+    }
+    let preview = text.chars().take(40).collect::<String>();
+    let title = if preview.len() < text.len() {
+        format!("{}...", preview)
+    } else {
+        preview
+    };
+    Ok(state.snippet_manager.add(title, "text".to_string(), text))
+}
+
+#[tauri::command]
 async fn delete_snippet(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     Ok(state.snippet_manager.delete(&id))
 }
@@ -1464,6 +1509,37 @@ async fn delete_snippet(state: State<'_, AppState>, id: String) -> Result<bool, 
 #[tauri::command]
 async fn update_snippet(state: State<'_, AppState>, id: String, title: String, content: String) -> Result<bool, String> {
     Ok(state.snippet_manager.update(&id, title, content))
+}
+
+#[tauri::command]
+async fn update_snippet_category(state: State<'_, AppState>, id: String, category: String) -> Result<bool, String> {
+    Ok(state.snippet_manager.update_category(&id, category))
+}
+
+#[tauri::command]
+async fn reorder_snippets(state: State<'_, AppState>, ordered_ids: Vec<String>) -> Result<bool, String> {
+    Ok(state.snippet_manager.reorder(ordered_ids))
+}
+
+#[tauri::command]
+async fn get_snippet_categories(state: State<'_, AppState>) -> Result<Vec<String>, String> {
+    Ok(state.snippet_manager.get_categories())
+}
+
+#[tauri::command]
+async fn rename_snippet_category(state: State<'_, AppState>, old_name: String, new_name: String) -> Result<bool, String> {
+    Ok(state.snippet_manager.rename_category(&old_name, &new_name))
+}
+
+#[tauri::command]
+async fn delete_snippet_category(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    state.snippet_manager.delete_category(&name);
+    Ok(())
+}
+
+#[tauri::command]
+async fn add_snippet_with_category(state: State<'_, AppState>, title: String, content_type: String, content: String, category: String) -> Result<SnippetItem, String> {
+    Ok(state.snippet_manager.add_with_category(title, content_type, content, category))
 }
 
 #[tauri::command]
@@ -1494,6 +1570,7 @@ async fn paste_snippet_item(app: AppHandle, item_id: String) -> Result<(), Strin
 
     let content = snippet.content.clone();
     let is_text = snippet.content_type == "text";
+    let app_clone = app.clone();
     std::thread::spawn(move || {
         #[cfg(windows)]
         {
@@ -1507,17 +1584,21 @@ async fn paste_snippet_item(app: AppHandle, item_id: String) -> Result<(), Strin
                     let _ = SetForegroundWindow(hwnd);
                 }
             }
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        #[cfg(not(windows))]
-        if is_text {
-            type_text(&content);
-        } else {
+            std::thread::sleep(std::time::Duration::from_millis(100));
             simulate_paste();
         }
-        #[cfg(windows)]
-        simulate_paste();
+
+        #[cfg(not(windows))]
+        {
+            // Layer-shell overlay has keyboard_interactivity=false,
+            // so keyboard focus stays on the previous window — just wtype directly.
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if is_text {
+                type_text(&content);
+            } else {
+                simulate_paste();
+            }
+        }
     });
 
     Ok(())
@@ -1646,23 +1727,6 @@ fn get_cursor_and_monitor_info() -> (i32, i32, i32, i32, i32, i32) {
 }
 
 #[tauri::command]
-async fn open_multi_paste_panel(app: AppHandle) -> Result<(), String> {
-    open_multi_paste_window(&app).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn close_multi_paste(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("multipaste") {
-        window.close().map_err(|e| e.to_string())?;
-    }
-    let state = app.state::<AppState>();
-    if let Ok(mut open) = state.multi_paste_window_open.lock() {
-        *open = false;
-    }
-    Ok(())
-}
-
-#[tauri::command]
 async fn paste_history_item(app: AppHandle, item_id: String) -> Result<(), String> {
     let state = app.state::<AppState>();
 
@@ -1705,9 +1769,14 @@ async fn paste_history_item(app: AppHandle, item_id: String) -> Result<(), Strin
     state.clipboard_monitor.resume();
     copy_result?;
 
-    // Auto-paste: restore focus to previous window and simulate Ctrl+V
-    // Keep popup open so user can paste multiple items
-    std::thread::spawn(|| {
+    // Auto-paste: restore focus to previous window and simulate paste
+    let is_text = matches!(item.item_type, HistoryItemType::ClipboardText | HistoryItemType::ColorPick);
+    let paste_content = if is_text {
+        item.text_content.clone().or_else(|| item.color_hex.clone()).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    std::thread::spawn(move || {
         #[cfg(windows)]
         {
             use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
@@ -1721,10 +1790,19 @@ async fn paste_history_item(app: AppHandle, item_id: String) -> Result<(), Strin
                     let _ = SetForegroundWindow(hwnd);
                 }
             }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            simulate_paste();
         }
 
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        simulate_paste();
+        #[cfg(not(windows))]
+        {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            if is_text && !paste_content.is_empty() {
+                type_text(&paste_content);
+            } else {
+                simulate_paste();
+            }
+        }
     });
 
     Ok(())
@@ -1845,7 +1923,7 @@ fn start_paste_hook(app: AppHandle) {
                                 .unwrap_or(true); // Assume open if can't lock (safer)
 
                             if !is_open {
-                                let _ = open_multi_paste_window(app);
+                                let _ = open_quick_paste_window(app);
                                 // Block the second V keypress so it doesn't paste
                                 return LRESULT(1);
                             }
@@ -2267,7 +2345,7 @@ pub fn run() {
                 Some("capture") => { let _ = open_selection_window(app); },
                 Some("history") => { let _ = open_history_window(app); },
                 Some("colorpicker") => { let _ = open_color_picker_window(app); },
-                Some("quickpaste") => { let _ = open_multi_paste_window(app); },
+                Some("quickpaste") => { let _ = open_quick_paste_window(app); },
                 Some("snippets") => { let _ = open_quick_paste_window(app); },
                 _ => {
                     // No action flag: just focus existing window
@@ -2626,7 +2704,7 @@ pub fn run() {
 
             app.global_shortcut().on_shortcut(quickpaste_shortcut, move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
-                    let _ = open_multi_paste_window(&app_handle_quickpaste);
+                    let _ = open_quick_paste_window(&app_handle_quickpaste);
                 }
             })?;
 
@@ -2727,13 +2805,7 @@ pub fn run() {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     let _ = open_color_picker_window(&h);
                 });
-            } else if cli_args.iter().any(|a| a == "--quickpaste") {
-                let h = app.handle().clone();
-                std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_millis(500));
-                    let _ = open_multi_paste_window(&h);
-                });
-            } else if cli_args.iter().any(|a| a == "--snippets") {
+            } else if cli_args.iter().any(|a| a == "--quickpaste" || a == "--snippets") {
                 let h = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(500));
@@ -2789,8 +2861,6 @@ pub fn run() {
             open_history_panel,
             open_settings_panel,
             // Multi-paste commands
-            open_multi_paste_panel,
-            close_multi_paste,
             paste_history_item,
             copy_history_item_to_clipboard,
             // Desktop Guardian commands
@@ -2805,13 +2875,21 @@ pub fn run() {
             upload_to_dev_server,
             get_snippets,
             add_snippet,
+            add_snippet_with_category,
+            add_snippet_from_clipboard,
             delete_snippet,
             update_snippet,
+            update_snippet_category,
+            reorder_snippets,
+            get_snippet_categories,
+            rename_snippet_category,
+            delete_snippet_category,
             paste_snippet_item,
             copy_snippet_to_clipboard,
             open_quick_paste_panel,
             toggle_panel_side,
             toggle_panel_monitor,
+            set_panel_keyboard,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")

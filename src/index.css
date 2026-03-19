@@ -19,51 +19,6 @@ body {
   background-color: #1a1a2e; /* Dark default to prevent white flash */
 }
 
-/* Scanlines effect for terminal theme */
-.scanlines {
-  position: relative;
-}
-
-.scanlines::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    0deg,
-    rgba(0, 0, 0, 0.15) 0px,
-    rgba(0, 0, 0, 0.15) 1px,
-    transparent 1px,
-    transparent 2px
-  );
-  z-index: 100;
-}
-
-/* CRT glow effect */
-.crt-glow {
-  text-shadow: 0 0 5px currentColor;
-}
-
-/* Cyber cut corners */
-.cyber-clip {
-  clip-path: polygon(
-    0 10px, 10px 0,
-    calc(100% - 10px) 0, 100% 10px,
-    100% calc(100% - 10px), calc(100% - 10px) 100%,
-    10px 100%, 0 calc(100% - 10px)
-  );
-}
-
-/* Neon glow animation */
-@keyframes neon-pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.8; }
-}
-
-.neon-glow {
-  animation: neon-pulse 2s ease-in-out infinite;
-}
-
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

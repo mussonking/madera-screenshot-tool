@@ -3,8 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
-import { load } from "@tauri-apps/plugin-store";
 import * as fabric from "fabric";
+import { THEMES, ThemeName, loadThemeFromStore } from "../utils/theme";
 import {
   Pencil,
   Highlighter,
@@ -54,163 +54,12 @@ interface Toast {
   visible: boolean;
 }
 
-// Theme definitions
-type ThemeName = "default" | "cyberpunk" | "retro" | "candy" | "sketch" | "neon";
-
-interface Theme {
-  name: string;
-  colors: string[];
-  toolbar: string;
-  toolbarBorder: string;
-  buttonBg: string;
-  buttonActive: string;
-  buttonHover: string;
-  canvasBg: string;
-  textColor: string;
-  accentColor: string;
-  // Visual style
-  fontFamily: string;
-  borderRadius: string;
-  borderStyle: string;
-  buttonStyle: string;
-  glowEffect?: string;
-  scanlines?: boolean;
-}
-
-const THEMES: Record<ThemeName, Theme> = {
-  default: {
-    name: "Default",
-    colors: ["#e94560", "#ff6b35", "#f7c948", "#4ade80", "#22d3ee", "#3b82f6", "#a855f7", "#ffffff", "#000000"],
-    toolbar: "#16213e",
-    toolbarBorder: "#0f3460",
-    buttonBg: "#0f3460",
-    buttonActive: "#e94560",
-    buttonHover: "rgba(233, 69, 96, 0.5)",
-    canvasBg: "#1a1a2e",
-    textColor: "#e5e5e5",
-    accentColor: "#e94560",
-    fontFamily: "'Segoe UI', system-ui, sans-serif",
-    borderRadius: "8px",
-    borderStyle: "solid",
-    buttonStyle: "normal",
-  },
-  cyberpunk: {
-    name: "⚡ Cyberpunk 2077",
-    colors: ["#fcee0a", "#00f0ff", "#ff003c", "#ff00ff", "#00ff9f", "#ff6b00", "#bd00ff", "#ffffff", "#000000"],
-    toolbar: "#0c0c0c",
-    toolbarBorder: "#fcee0a",
-    buttonBg: "#1a1a1a",
-    buttonActive: "#fcee0a",
-    buttonHover: "rgba(252, 238, 10, 0.3)",
-    canvasBg: "#0a0a0a",
-    textColor: "#fcee0a",
-    accentColor: "#00f0ff",
-    fontFamily: "'Orbitron', 'Rajdhani', 'Share Tech Mono', monospace",
-    borderRadius: "0px",
-    borderStyle: "solid",
-    buttonStyle: "cyber",
-    glowEffect: "0 0 10px #fcee0a, 0 0 20px #fcee0a40",
-  },
-  retro: {
-    name: "▸ Terminal",
-    colors: ["#33bb33", "#22aa22", "#44cc44", "#aaaa33", "#aa8833", "#aa3333", "#888888", "#33bb33", "#0a200a"],
-    toolbar: "#0a140a",
-    toolbarBorder: "#1a3a1a",
-    buttonBg: "#0d1f0d",
-    buttonActive: "#33bb33",
-    buttonHover: "rgba(51, 187, 51, 0.2)",
-    canvasBg: "#050d05",
-    textColor: "#33bb33",
-    accentColor: "#22aa22",
-    fontFamily: "'VT323', 'Courier New', monospace",
-    borderRadius: "0px",
-    borderStyle: "solid",
-    buttonStyle: "terminal",
-    glowEffect: "0 0 5px #33bb3380",
-    scanlines: true,
-  },
-  candy: {
-    name: "🍬 Candy Pop",
-    colors: ["#ff6b9d", "#c44569", "#f8b500", "#7ed6df", "#be2edd", "#ff9ff3", "#feca57", "#ffffff", "#2d3436"],
-    toolbar: "#fff0f5",
-    toolbarBorder: "#ffb6c1",
-    buttonBg: "#ffe4ec",
-    buttonActive: "#ff6b9d",
-    buttonHover: "rgba(255, 107, 157, 0.3)",
-    canvasBg: "#fff5f8",
-    textColor: "#c44569",
-    accentColor: "#ff6b9d",
-    fontFamily: "'Comic Sans MS', 'Bubblegum Sans', cursive",
-    borderRadius: "20px",
-    borderStyle: "solid",
-    buttonStyle: "rounded",
-  },
-  sketch: {
-    name: "✏️ Sketch",
-    colors: ["#2d3436", "#636e72", "#b2bec3", "#0984e3", "#e17055", "#00b894", "#fdcb6e", "#dfe6e9", "#000000"],
-    toolbar: "#fefefe",
-    toolbarBorder: "#ccc",
-    buttonBg: "#f0f0f0",
-    buttonActive: "#2d3436",
-    buttonHover: "rgba(45, 52, 54, 0.15)",
-    canvasBg: "#f8f8f8",
-    textColor: "#2d3436",
-    accentColor: "#0984e3",
-    fontFamily: "'Segoe Print', 'Patrick Hand', cursive",
-    borderRadius: "4px",
-    borderStyle: "dashed",
-    buttonStyle: "sketch",
-  },
-  neon: {
-    name: "🌈 Neon Glow",
-    colors: ["#ff00ff", "#00ffff", "#ffff00", "#ff0080", "#00ff80", "#8000ff", "#ff8000", "#ffffff", "#000000"],
-    toolbar: "#0a0015",
-    toolbarBorder: "#ff00ff",
-    buttonBg: "#150025",
-    buttonActive: "#ff00ff",
-    buttonHover: "rgba(255, 0, 255, 0.3)",
-    canvasBg: "#050010",
-    textColor: "#ff88ff",
-    accentColor: "#00ffff",
-    fontFamily: "'Audiowide', 'Orbitron', sans-serif",
-    borderRadius: "12px",
-    borderStyle: "solid",
-    buttonStyle: "neon",
-    glowEffect: "0 0 10px currentColor, 0 0 20px currentColor, 0 0 30px currentColor",
-  },
-};
+// Drawing color palette (theme-independent)
+const DRAWING_COLORS = ["#e94560", "#ff6b35", "#f7c948", "#4ade80", "#22d3ee", "#3b82f6", "#a855f7", "#ffffff", "#000000"];
 
 const STROKE_WIDTHS = [1, 2, 4, 6, 8, 12];
 
-// Padding around the image for annotations outside bounds
-const CANVAS_PADDING = 50;
-
-const STORE_PATH = "settings.json";
-
-// Helper to load theme from Tauri store
-const loadThemeFromStore = async (): Promise<ThemeName> => {
-  try {
-    const store = await load(STORE_PATH);
-    const saved = await store.get<string>("theme");
-    if (saved && saved in THEMES) {
-      return saved as ThemeName;
-    }
-  } catch {
-    // Store not available
-  }
-  return "default";
-};
-
-// Helper to save theme to Tauri store
-const saveThemeToStore = async (themeName: ThemeName) => {
-  try {
-    const store = await load(STORE_PATH);
-    await store.set("theme", themeName);
-    await store.save();
-  } catch {
-    // Store not available
-  }
-};
+const CANVAS_PADDING = 0;
 
 export default function Editor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -223,7 +72,6 @@ export default function Editor() {
   const [themeLoaded, setThemeLoaded] = useState(false);
   const [strokeWidth, setStrokeWidth] = useState(2);
   const [showColorPicker, setShowColorPicker] = useState(false);
-  const [showThemePicker, setShowThemePicker] = useState(false);
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
@@ -237,9 +85,8 @@ export default function Editor() {
     setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
   };
 
-  // Get current theme and colors
   const theme = THEMES[currentTheme];
-  const COLORS = theme.colors;
+  const COLORS = DRAWING_COLORS;
 
   // Use refs for history to avoid stale closure issues
   const historyRef = useRef<string[]>([]);
@@ -268,8 +115,9 @@ export default function Editor() {
     };
   }, []);
 
-  // Initialize canvas - only runs once
+  // Initialize canvas - wait for theme to load first so layout is stable
   useEffect(() => {
+    if (!themeLoaded) return;
     loadImage();
 
     return () => {
@@ -277,7 +125,47 @@ export default function Editor() {
         fabricRef.current.dispose();
       }
     };
-  }, []);
+  }, [themeLoaded]);
+
+  // Re-fit canvas when container resizes
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver(() => {
+      if (!fabricRef.current || !containerRef.current || imageSize.width === 0) return;
+      const cw = containerRef.current.clientWidth;
+      const ch = containerRef.current.clientHeight;
+      if (cw < 100 || ch < 100) return;
+
+      const imgW = imageSize.width;
+      const imgH = imageSize.height;
+      let newW = imgW;
+      let newH = imgH;
+
+      if (imgW > cw || imgH > ch) {
+        const ratio = Math.min(cw / imgW, ch / imgH);
+        newW = Math.floor(imgW * ratio);
+        newH = Math.floor(imgH * ratio);
+      }
+
+      setBaseCanvasSize({ width: newW, height: newH });
+      const canvas = fabricRef.current;
+      canvas.setDimensions({ width: newW, height: newH });
+
+      // Re-scale background image
+      const bg = canvas.backgroundImage;
+      if (bg) {
+        bg.set({
+          left: 0,
+          top: 0,
+          scaleX: newW / imgW,
+          scaleY: newH / imgH,
+        });
+      }
+      canvas.renderAll();
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [imageSize]);
 
   // Keyboard and wheel event handlers
   useEffect(() => {
@@ -436,11 +324,16 @@ export default function Editor() {
       }
       setImageSize({ width: pending.width, height: pending.height });
 
-      // Wait for DOM to be ready
-      setTimeout(() => {
-        console.log('Initializing canvas...');
-        initCanvas(pending.image_data, pending.width, pending.height);
-      }, 100);
+      // Wait for DOM layout to be ready (requestAnimationFrame ensures paint)
+      const waitForLayout = () => {
+        const container = containerRef.current;
+        if (container && container.clientWidth > 100 && container.clientHeight > 100) {
+          initCanvas(pending.image_data, pending.width, pending.height);
+        } else {
+          requestAnimationFrame(waitForLayout);
+        }
+      };
+      requestAnimationFrame(waitForLayout);
     } catch (err) {
       console.error("Failed to load image:", err);
     }
@@ -462,8 +355,8 @@ export default function Editor() {
     const cw = container.clientWidth || window.innerWidth;
     const ch = container.clientHeight || window.innerHeight;
 
-    const maxWidth = cw - 40;
-    const maxHeight = ch - 40;
+    const maxWidth = cw;
+    const maxHeight = ch;
 
     // Calculate scaled image dimensions
     let imageWidth = width;
@@ -1036,7 +929,6 @@ export default function Editor() {
         backgroundColor: tool === toolName ? theme.buttonActive : theme.buttonBg,
         color: tool === toolName ? "#fff" : theme.textColor,
         borderRadius: theme.borderRadius,
-        boxShadow: tool === toolName && theme.glowEffect ? theme.glowEffect : undefined,
       }}
       className="p-2 transition-all hover:opacity-80"
       title={`${toolName} (${shortcut})`}
@@ -1045,27 +937,6 @@ export default function Editor() {
     </button>
   );
 
-  const handleThemeChange = (newTheme: ThemeName) => {
-    setCurrentTheme(newTheme);
-    setShowThemePicker(false);
-    // Keep current color - don't change based on theme
-    // Save to Tauri store
-    saveThemeToStore(newTheme);
-  };
-
-  // Get theme-specific classes
-  const getThemeClasses = () => {
-    switch (currentTheme) {
-      case "retro":
-        return "scanlines crt-glow";
-      case "cyberpunk":
-        return "cyber-clip";
-      case "neon":
-        return "neon-glow";
-      default:
-        return "";
-    }
-  };
 
   // Show loading state while theme loads
   if (!themeLoaded) {
@@ -1074,7 +945,7 @@ export default function Editor() {
 
   return (
     <div
-      className={`h-screen w-screen flex flex-col overflow-hidden ${getThemeClasses()}`}
+      className="h-screen w-screen flex flex-col overflow-hidden"
       style={{
         backgroundColor: theme.canvasBg,
         fontFamily: theme.fontFamily,
@@ -1086,7 +957,6 @@ export default function Editor() {
         style={{
           backgroundColor: theme.toolbar,
           borderBottom: `2px ${theme.borderStyle} ${theme.toolbarBorder} `,
-          boxShadow: theme.glowEffect ? `${theme.glowEffect} ` : undefined,
         }}
       >
         {/* Drawing Tools */}
@@ -1266,7 +1136,6 @@ export default function Editor() {
                 backgroundColor: theme.toolbar,
                 border: `2px ${theme.borderStyle} ${theme.accentColor} `,
                 borderRadius: theme.borderRadius,
-                boxShadow: theme.glowEffect,
               }}
             >
               {/* Theme colors */}
@@ -1366,65 +1235,16 @@ export default function Editor() {
           ))}
         </div>
 
-        {/* Spacer to push theme picker to the right */}
-        <div className="flex-1" />
-
-        {/* Theme Picker */}
-        <div className="relative">
-          <button
-            onClick={() => setShowThemePicker(!showThemePicker)}
-            style={{
-              backgroundColor: theme.buttonBg,
-              color: theme.accentColor,
-              borderRadius: theme.borderRadius,
-              border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
-            }}
-            className="p-2 hover:opacity-80 transition-colors"
-            title="Change Theme"
-          >
-            <Sparkles size={20} />
-          </button>
-          {showThemePicker && (
-            <div
-              className="absolute top-full mt-2 right-0 p-2 shadow-xl z-50 min-w-[180px]"
-              style={{
-                backgroundColor: theme.toolbar,
-                border: `2px ${theme.borderStyle} ${theme.accentColor} `,
-                borderRadius: theme.borderRadius,
-                boxShadow: theme.glowEffect,
-              }}
-            >
-              <div className="flex flex-col gap-1">
-                {(Object.keys(THEMES) as ThemeName[]).map((themeName) => (
-                  <button
-                    key={themeName}
-                    onClick={() => handleThemeChange(themeName)}
-                    className="px-3 py-2 text-left text-sm transition-all hover:opacity-80"
-                    style={{
-                      backgroundColor: currentTheme === themeName ? THEMES[themeName].buttonActive : theme.buttonBg,
-                      color: currentTheme === themeName ? "#fff" : theme.textColor,
-                      borderRadius: theme.borderRadius,
-                      fontFamily: THEMES[themeName].fontFamily,
-                    }}
-                  >
-                    {currentTheme === themeName ? "▶ " : "  "}
-                    {THEMES[themeName].name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Canvas Container */}
-      <div ref={containerRef} className="flex-1 flex items-center justify-center p-4 overflow-auto">
+      <div ref={containerRef} className="flex-1 flex items-center justify-center overflow-hidden">
         <canvas ref={canvasRef} className="shadow-2xl" />
       </div>
 
       {/* Bottom Action Bar */}
       <div
-        className="p-3 flex items-center justify-center gap-4"
+        className="p-2 flex items-center justify-center gap-4"
         style={{
           backgroundColor: theme.toolbar,
           borderTop: `2px ${theme.borderStyle} ${theme.toolbarBorder} `,
@@ -1435,12 +1255,11 @@ export default function Editor() {
           style={{
             backgroundColor: theme.accentColor,
             borderRadius: theme.borderRadius,
-            boxShadow: theme.glowEffect,
           }}
           className="px-6 py-2 text-white hover:opacity-80 transition-colors flex items-center gap-2 font-medium"
         >
           <Copy size={18} />
-          {currentTheme === "retro" ? "> COPY" : currentTheme === "cyberpunk" ? "COPY_" : "Copy to Clipboard"}
+          Copy to Clipboard
         </button>
         <button
           onClick={saveToFile}
@@ -1453,7 +1272,7 @@ export default function Editor() {
           className="px-6 py-2 hover:opacity-80 transition-colors flex items-center gap-2"
         >
           <Save size={18} />
-          {currentTheme === "retro" ? "> SAVE" : currentTheme === "cyberpunk" ? "SAVE_" : "Save"}
+          Save
         </button>
         {/* CLI Upload Button */}
         <button
@@ -1468,7 +1287,7 @@ export default function Editor() {
           title="Upload to DEV Server and copy path"
         >
           <Upload size={18} />
-          {isUploading ? "Uploading..." : (currentTheme === "retro" ? "> CLI" : currentTheme === "cyberpunk" ? "CLI_" : "📤 CLI")}
+          {isUploading ? "Uploading..." : "CLI"}
         </button>
         <button
           onClick={async () => {
@@ -1483,7 +1302,7 @@ export default function Editor() {
           className="px-6 py-2 hover:opacity-80 transition-colors flex items-center gap-2"
         >
           <LayoutGrid size={18} />
-          {currentTheme === "retro" ? "> HISTORY" : currentTheme === "cyberpunk" ? "HIST_" : "History"}
+          History
         </button>
         <button
           onClick={closeWindow}
@@ -1494,7 +1313,7 @@ export default function Editor() {
           className="px-6 py-2 text-white hover:bg-gray-500 transition-colors flex items-center gap-2"
         >
           <X size={18} />
-          {currentTheme === "retro" ? "> EXIT" : currentTheme === "cyberpunk" ? "EXIT_" : "Cancel"}
+          Cancel
         </button>
       </div>
       {/* Toast Notification */}

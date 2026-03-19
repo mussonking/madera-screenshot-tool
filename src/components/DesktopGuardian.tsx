@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { load } from "@tauri-apps/plugin-store";
+import { THEMES, ThemeName, loadThemeFromStore } from "../utils/theme";
 import { format, parseISO } from "date-fns";
 import {
   Monitor,
@@ -21,103 +22,6 @@ import {
   Settings,
 } from "lucide-react";
 
-// Theme definitions - same as History
-type ThemeName = "default" | "cyberpunk" | "retro" | "candy" | "sketch" | "neon";
-
-interface Theme {
-  name: string;
-  toolbar: string;
-  toolbarBorder: string;
-  buttonBg: string;
-  buttonActive: string;
-  canvasBg: string;
-  textColor: string;
-  accentColor: string;
-  fontFamily: string;
-  borderRadius: string;
-  borderStyle: string;
-}
-
-const THEMES: Record<ThemeName, Theme> = {
-  default: {
-    name: "Default",
-    toolbar: "#16213e",
-    toolbarBorder: "#0f3460",
-    buttonBg: "#0f3460",
-    buttonActive: "#e94560",
-    canvasBg: "#1a1a2e",
-    textColor: "#e5e5e5",
-    accentColor: "#e94560",
-    fontFamily: "'Segoe UI', system-ui, sans-serif",
-    borderRadius: "8px",
-    borderStyle: "solid",
-  },
-  cyberpunk: {
-    name: "Cyberpunk 2077",
-    toolbar: "#0c0c0c",
-    toolbarBorder: "#fcee0a",
-    buttonBg: "#1a1a1a",
-    buttonActive: "#fcee0a",
-    canvasBg: "#0a0a0a",
-    textColor: "#fcee0a",
-    accentColor: "#00f0ff",
-    fontFamily: "'Orbitron', 'Share Tech Mono', monospace",
-    borderRadius: "0px",
-    borderStyle: "solid",
-  },
-  retro: {
-    name: "Terminal",
-    toolbar: "#0a140a",
-    toolbarBorder: "#1a3a1a",
-    buttonBg: "#0d1f0d",
-    buttonActive: "#33bb33",
-    canvasBg: "#050d05",
-    textColor: "#33bb33",
-    accentColor: "#22aa22",
-    fontFamily: "'VT323', 'Courier New', monospace",
-    borderRadius: "0px",
-    borderStyle: "solid",
-  },
-  candy: {
-    name: "Candy Pop",
-    toolbar: "#fff0f5",
-    toolbarBorder: "#ffb6c1",
-    buttonBg: "#ffe4ec",
-    buttonActive: "#ff6b9d",
-    canvasBg: "#fff5f8",
-    textColor: "#c44569",
-    accentColor: "#ff6b9d",
-    fontFamily: "'Comic Sans MS', cursive",
-    borderRadius: "20px",
-    borderStyle: "solid",
-  },
-  sketch: {
-    name: "Sketch",
-    toolbar: "#fefefe",
-    toolbarBorder: "#ccc",
-    buttonBg: "#f0f0f0",
-    buttonActive: "#2d3436",
-    canvasBg: "#f8f8f8",
-    textColor: "#2d3436",
-    accentColor: "#0984e3",
-    fontFamily: "'Segoe Print', cursive",
-    borderRadius: "4px",
-    borderStyle: "dashed",
-  },
-  neon: {
-    name: "Neon Glow",
-    toolbar: "#0a0015",
-    toolbarBorder: "#ff00ff",
-    buttonBg: "#150025",
-    buttonActive: "#ff00ff",
-    canvasBg: "#050010",
-    textColor: "#ff88ff",
-    accentColor: "#00ffff",
-    fontFamily: "'Audiowide', sans-serif",
-    borderRadius: "12px",
-    borderStyle: "solid",
-  },
-};
 
 interface WindowPosition {
   hwnd: number;
@@ -131,6 +35,8 @@ interface WindowPosition {
   is_maximized: boolean;
   is_minimized: boolean;
 }
+
+const STORE_PATH = "settings.json";
 
 interface MonitorLayout {
   index: number;
@@ -150,20 +56,6 @@ interface SavedLayout {
   is_auto_save: boolean;
 }
 
-const STORE_PATH = "settings.json";
-
-const loadThemeFromStore = async (): Promise<ThemeName> => {
-  try {
-    const store = await load(STORE_PATH);
-    const saved = await store.get<string>("theme");
-    if (saved && saved in THEMES) {
-      return saved as ThemeName;
-    }
-  } catch {
-    // Store not available
-  }
-  return "default";
-};
 
 const loadLayoutsFromStore = async (forceReload = false): Promise<SavedLayout[]> => {
   try {

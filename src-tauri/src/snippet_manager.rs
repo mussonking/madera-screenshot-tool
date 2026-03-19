@@ -10,6 +10,14 @@ pub struct SnippetItem {
     pub title: String,
     pub content_type: String, // "text" or "image"
     pub content: String,
+    #[serde(default = "default_category")]
+    pub category: String,
+    #[serde(default)]
+    pub sort_order: u32,
+}
+
+fn default_category() -> String {
+    "General".to_string()
 }
 
 pub struct SnippetManager {
@@ -43,15 +51,57 @@ impl SnippetManager {
 
     pub fn get_all(&self) -> Vec<SnippetItem> {
         let guard = self.snippets.lock().unwrap();
-        guard.clone()
+        let mut items = guard.clone();
+        items.sort_by(|a, b| a.category.cmp(&b.category).then(a.sort_order.cmp(&b.sort_order)));
+        items
     }
 
-    pub fn add(&self, title: String, content_type: String, content: String) -> SnippetItem {
+    pub fn get_categories(&self) -> Vec<String> {
+        let guard = self.snippets.lock().unwrap();
+        let mut cats: Vec<String> = guard.iter().map(|s| s.category.clone()).collect();
+        cats.sort();
+        cats.dedup();
+        if cats.is_empty() {
+            cats.push("General".to_string());
+        }
+        cats
+    }
+
+    pub fn add_with_category(&self, title: String, content_type: String, content: String, category: String) -> SnippetItem {
+        let sort_order = {
+            let guard = self.snippets.lock().unwrap();
+            guard.iter().filter(|s| s.category == category).map(|s| s.sort_order).max().unwrap_or(0) + 1
+        };
         let new_item = SnippetItem {
             id: Uuid::new_v4().to_string(),
             title,
             content_type,
             content,
+            category,
+            sort_order,
+        };
+
+        {
+            let mut guard = self.snippets.lock().unwrap();
+            guard.push(new_item.clone());
+        }
+
+        self.save();
+        new_item
+    }
+
+    pub fn add(&self, title: String, content_type: String, content: String) -> SnippetItem {
+        let sort_order = {
+            let guard = self.snippets.lock().unwrap();
+            guard.iter().filter(|s| s.category == "General").map(|s| s.sort_order).max().unwrap_or(0) + 1
+        };
+        let new_item = SnippetItem {
+            id: Uuid::new_v4().to_string(),
+            title,
+            content_type,
+            content,
+            category: "General".to_string(),
+            sort_order,
         };
 
         {
@@ -87,6 +137,57 @@ impl SnippetManager {
         } else {
             false
         }
+    }
+
+    pub fn update_category(&self, id: &str, category: String) -> bool {
+        let mut guard = self.snippets.lock().unwrap();
+        if let Some(item) = guard.iter_mut().find(|i| i.id == id) {
+            item.category = category;
+            drop(guard);
+            self.save();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn reorder(&self, ordered_ids: Vec<String>) -> bool {
+        let mut guard = self.snippets.lock().unwrap();
+        for (i, id) in ordered_ids.iter().enumerate() {
+            if let Some(item) = guard.iter_mut().find(|s| &s.id == id) {
+                item.sort_order = i as u32;
+            }
+        }
+        drop(guard);
+        self.save();
+        true
+    }
+
+    pub fn rename_category(&self, old_name: &str, new_name: &str) -> bool {
+        let mut guard = self.snippets.lock().unwrap();
+        let mut changed = false;
+        for item in guard.iter_mut() {
+            if item.category == old_name {
+                item.category = new_name.to_string();
+                changed = true;
+            }
+        }
+        if changed {
+            drop(guard);
+            self.save();
+        }
+        changed
+    }
+
+    pub fn delete_category(&self, name: &str) {
+        let mut guard = self.snippets.lock().unwrap();
+        for item in guard.iter_mut() {
+            if item.category == name {
+                item.category = "General".to_string();
+            }
+        }
+        drop(guard);
+        self.save();
     }
 
     pub fn save(&self) {

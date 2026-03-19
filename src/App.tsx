@@ -5,12 +5,11 @@ import Editor from "./components/Editor";
 import History from "./components/History";
 import ColorPicker from "./components/ColorPicker";
 import DesktopGuardian from "./components/DesktopGuardian";
-import MultiPaster from "./components/MultiPaster";
 import WakePopup from "./components/WakePopup";
 import SettingsPage from "./components/SettingsPage";
 import QuickPasteModal from "./components/QuickPasteModal";
 
-type View = "dashboard" | "selection" | "editor" | "history" | "colorpicker" | "desktop-guardian" | "multipaste" | "settings" | "quickpaste";
+type View = "dashboard" | "selection" | "editor" | "history" | "colorpicker" | "desktop-guardian" | "settings" | "quickpaste";
 
 function App() {
   const [view, setView] = useState<View>("dashboard");
@@ -23,9 +22,7 @@ function App() {
       const path = window.location.pathname;
       const hash = window.location.hash;
 
-      if (hash.includes("multipaste") || path.includes("multipaste")) {
-        return "multipaste";
-      } else if (hash.includes("quickpaste") || path.includes("quickpaste")) {
+      if (hash.includes("multipaste") || path.includes("multipaste") || hash.includes("quickpaste") || path.includes("quickpaste")) {
         return "quickpaste";
       } else if (hash.includes("settings") || path.includes("settings")) {
         return "settings";
@@ -64,7 +61,6 @@ function App() {
       {view === "history" && <History />}
       {view === "colorpicker" && <ColorPicker />}
       {view === "desktop-guardian" && <DesktopGuardian />}
-      {view === "multipaste" && <MultiPaster />}
       {view === "quickpaste" && <QuickPasteModal />}
       {view === "settings" && <SettingsPage />}
       {/* Wake popup shown over everything when system wakes from sleep */}
