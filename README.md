@@ -221,7 +221,9 @@ MIT
 ---
 
 <p align="center">
-  Built with Rust, React, and too much coffee by <a href="https://github.com/mussonking">@mussonking</a>
+  Built with too much coffee by <a href="https://github.com/mussonking">Marc-Antoine Du Moulin</a>
+  <br />
+  Founder of <a href="https://leclasseur.ca">Le Classeur</a> -- AI-powered document management from Montreal, QC
   <br />
   <sub>Powered by <a href="https://tauri.app">Tauri 2</a> -- because Electron was never the answer.</sub>
 </p>
