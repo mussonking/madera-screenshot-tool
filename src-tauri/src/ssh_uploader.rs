@@ -81,6 +81,9 @@ impl SshUploader {
             if msg.contains("Permission denied") || msg.contains("Authentication failed") {
                 println!("[SSH] Auth failed: {}", msg);
                 Err(SshError::AuthFailed)
+            } else if msg.contains("Name or service not known") || msg.contains("Temporary failure") {
+                println!("[SSH] Connection failed: {}", msg);
+                Err(SshError::ConnectionFailed(format!("Cannot connect to {}: {}", self.host, msg)))
             } else {
                 println!("[SSH] Upload failed: {}", msg);
                 Err(SshError::UploadFailed(msg.to_string()))

@@ -4,17 +4,13 @@ import SelectionOverlay from "./components/SelectionOverlay";
 import Editor from "./components/Editor";
 import History from "./components/History";
 import ColorPicker from "./components/ColorPicker";
-import DesktopGuardian from "./components/DesktopGuardian";
-import WakePopup from "./components/WakePopup";
 import SettingsPage from "./components/SettingsPage";
 import QuickPasteModal from "./components/QuickPasteModal";
 
-type View = "dashboard" | "selection" | "editor" | "history" | "colorpicker" | "desktop-guardian" | "settings" | "quickpaste";
+type View = "dashboard" | "selection" | "editor" | "history" | "colorpicker" | "settings" | "quickpaste";
 
 function App() {
   const [view, setView] = useState<View>("dashboard");
-
-  // Auto-save is handled in the Rust backend (runs even without windows open)
 
   useEffect(() => {
     // Determine which view to show based on URL path or hash
@@ -26,8 +22,6 @@ function App() {
         return "quickpaste";
       } else if (hash.includes("settings") || path.includes("settings")) {
         return "settings";
-      } else if (hash.includes("desktop-guardian") || path.includes("desktop-guardian")) {
-        return "desktop-guardian";
       } else if (hash.includes("editor") || path.includes("editor")) {
         return "editor";
       } else if (hash.includes("history") || path.includes("history")) {
@@ -60,11 +54,8 @@ function App() {
       {view === "editor" && <Editor />}
       {view === "history" && <History />}
       {view === "colorpicker" && <ColorPicker />}
-      {view === "desktop-guardian" && <DesktopGuardian />}
       {view === "quickpaste" && <QuickPasteModal />}
       {view === "settings" && <SettingsPage />}
-      {/* Wake popup shown over everything when system wakes from sleep */}
-      <WakePopup />
     </div>
   );
 }

@@ -6,7 +6,8 @@ mod history;
 mod native_selection;
 mod snippet_manager;
 mod ssh_uploader;
-mod window_layout;
+#[cfg(target_os = "linux")]
+mod wayland_focus;
 
 use capture::CaptureManager;
 use clipboard::ClipboardManager;
@@ -15,13 +16,9 @@ use color_picker::{ColorFormat, ColorInfo, ColorPickSettings};
 use history::{HistoryItem, HistoryItemType, HistoryManager, ScreenshotRecord};
 use snippet_manager::{SnippetItem, SnippetManager};
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use std::sync::mpsc::Sender;
 
-// Global flag to track if system is sleeping (for auto-save)
-static IS_SYSTEM_SLEEPING: AtomicBool = AtomicBool::new(false);
 use tauri::{
     image::Image,
     menu::{CheckMenuItem, Menu, MenuItem},
@@ -67,7 +64,6 @@ pub struct AppState {
     pub should_exit: Mutex<bool>,
     pub last_paste_time: Mutex<Option<Instant>>,
     pub multi_paste_window_open: Mutex<bool>,
-    pub auto_save_notifier: Mutex<Option<Sender<()>>>,
     pub snippet_manager: Arc<SnippetManager>,
 }
 
@@ -140,15 +136,15 @@ async fn upload_to_dev_server(
     };
     
     if !enabled {
-        return Err("SSH upload not enabled".to_string());
+        return Err("SSH upload not enabled - enable it in Settings".to_string());
     }
-    
+
     if host.is_empty() {
-        return Err("SSH host not configured".to_string());
+        return Err("SSH host not configured - enter your server address in Settings > SSH Upload".to_string());
     }
 
     if remote_path.is_empty() {
-        return Err("SSH remote path not configured".to_string());
+        return Err("Remote directory path not configured - enter the destination path in Settings > SSH Upload".to_string());
     }
 
     // Generate filename with timestamp
@@ -178,145 +174,6 @@ async fn upload_to_dev_server(
     }
     
     Ok(full_remote_path)
-}
-
-// Monitor system power events (sleep/wake)
-#[cfg(windows)]
-fn monitor_system_power_events(app: AppHandle) {
-    use windows::Win32::System::Power::RegisterPowerSettingNotification;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DispatchMessageW, GetMessageW, RegisterClassW,
-        TranslateMessage, HWND_MESSAGE, MSG, WINDOW_EX_STYLE, WINDOW_STYLE, WNDCLASSW,
-        WM_POWERBROADCAST,
-    };
-    use windows::Win32::Foundation::HWND;
-    use windows::core::PCWSTR;
-    use std::sync::atomic::{AtomicPtr, Ordering};
-
-    // Store app handle in a static for the window proc
-    static APP_HANDLE: AtomicPtr<AppHandle> = AtomicPtr::new(std::ptr::null_mut());
-
-    unsafe extern "system" fn power_wnd_proc(
-        hwnd: HWND,
-        msg: u32,
-        wparam: windows::Win32::Foundation::WPARAM,
-        lparam: windows::Win32::Foundation::LPARAM,
-    ) -> windows::Win32::Foundation::LRESULT {
-        const WM_POWERBROADCAST: u32 = 0x0218;
-        const PBT_APMSUSPEND: u32 = 4; // System is about to sleep
-        const PBT_APMRESUMEAUTOMATIC: u32 = 18;
-        const PBT_APMRESUMESUSPEND: u32 = 7;
-        const PBT_POWERSETTINGCHANGE: u32 = 0x8013;
-
-        if msg == WM_POWERBROADCAST {
-            let event = wparam.0 as u32;
-            let app_ptr = APP_HANDLE.load(Ordering::SeqCst);
-
-            // System is ABOUT TO SLEEP - block auto-saves immediately
-            if event == PBT_APMSUSPEND {
-                IS_SYSTEM_SLEEPING.store(true, Ordering::SeqCst);
-                println!("[Desktop Guardian] System going to sleep - blocking auto-saves!");
-                if !app_ptr.is_null() {
-                    let app = &*app_ptr;
-                    let _ = app.emit("system-going-to-sleep", ());
-                }
-            }
-
-            // Handle resume events
-            if event == PBT_APMRESUMEAUTOMATIC || event == PBT_APMRESUMESUSPEND || event == PBT_POWERSETTINGCHANGE {
-                if !app_ptr.is_null() {
-                    let app = &*app_ptr;
-                    let app_clone = app.clone();
-                    std::thread::spawn(move || {
-                        std::thread::sleep(std::time::Duration::from_secs(2));
-                        IS_SYSTEM_SLEEPING.store(false, Ordering::SeqCst);
-                        
-                        // Check if Desktop Guardian is enabled before doing anything
-                        let guardian_enabled = app_clone.path().app_config_dir()
-                            .ok()
-                            .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
-                            .and_then(|content| serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&content).ok())
-                            .and_then(|data| data.get("guardian_settings").cloned())
-                            .and_then(|v| v.get("autoSaveEnabled").and_then(|v| v.as_bool()))
-                            .unwrap_or(true);
-                        
-                        if !guardian_enabled {
-                            println!("[Desktop Guardian] Disabled - skipping wake actions");
-                            return;
-                        }
-                        
-                        let _ = app_clone.emit("system-wake-from-sleep", ());
-                        println!("[Desktop Guardian] Wake from sleep detected - resuming auto-saves!");
-
-                        // Signal the auto-save thread to wake up immediately
-                        {
-                            let state = app_clone.state::<AppState>();
-                            let guard_result = state.auto_save_notifier.lock();
-                            if let Ok(notifier) = guard_result {
-                                if let Some(tx) = notifier.as_ref() {
-                                    let _ = tx.send(());
-                                }
-                            }
-                        };
-                    });
-                }
-            }
-        }
-        DefWindowProcW(hwnd, msg, wparam, lparam)
-    }
-
-    unsafe {
-        // Store app handle
-        let app_box = Box::new(app);
-        APP_HANDLE.store(Box::into_raw(app_box), Ordering::SeqCst);
-
-        // Register window class
-        let class_name: Vec<u16> = "PowerMonitorClass\0".encode_utf16().collect();
-        let wc = WNDCLASSW {
-            lpfnWndProc: Some(power_wnd_proc),
-            lpszClassName: PCWSTR(class_name.as_ptr()),
-            ..Default::default()
-        };
-        RegisterClassW(&wc);
-
-        // Create message-only window
-        let hwnd = CreateWindowExW(
-            WINDOW_EX_STYLE::default(),
-            PCWSTR(class_name.as_ptr()),
-            PCWSTR::null(),
-            WINDOW_STYLE::default(),
-            0, 0, 0, 0,
-            HWND_MESSAGE,
-            None,
-            None,
-            None,
-        );
-
-        if let Ok(hwnd) = hwnd {
-            // GUID_CONSOLE_DISPLAY_STATE - notifies when displays turn on/off
-            let guid_console_display = windows::core::GUID::from_values(
-                0x6fe69556, 0x704a, 0x47a0, [0x8f, 0x24, 0xc2, 0x8d, 0x93, 0x6f, 0xda, 0x47]
-            );
-            use windows::Win32::UI::WindowsAndMessaging::REGISTER_NOTIFICATION_FLAGS;
-            let _ = RegisterPowerSettingNotification(
-                hwnd,
-                &guid_console_display,
-                REGISTER_NOTIFICATION_FLAGS(0), // DEVICE_NOTIFY_WINDOW_HANDLE
-            );
-
-            // Message loop
-            let mut msg = MSG::default();
-            while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
-            }
-        }
-    }
-}
-
-#[cfg(not(windows))]
-fn monitor_system_power_events(_app: AppHandle) {
-    // Power event monitoring is Windows-only; no-op on other platforms.
 }
 
 // Commands
@@ -864,116 +721,6 @@ async fn update_color_settings(
     Ok(())
 }
 
-// ============================================
-// Desktop Guardian Commands (Window Layout Manager)
-// ============================================
-
-#[tauri::command]
-async fn get_desktop_monitors() -> Result<Vec<window_layout::MonitorLayout>, String> {
-    Ok(window_layout::get_all_monitors())
-}
-
-#[tauri::command]
-async fn get_current_window_layout() -> Result<Vec<window_layout::WindowPosition>, String> {
-    Ok(window_layout::get_all_windows())
-}
-
-#[tauri::command]
-async fn save_window_layout(name: String) -> Result<window_layout::SavedLayout, String> {
-    let windows = window_layout::get_all_windows();
-    let id = uuid::Uuid::new_v4().to_string();
-    let created_at = chrono::Utc::now().to_rfc3339();
-
-    Ok(window_layout::SavedLayout {
-        id,
-        name,
-        created_at,
-        windows,
-        is_auto_save: false,
-    })
-}
-
-#[tauri::command]
-async fn restore_window_layout(
-    layout: window_layout::SavedLayout,
-) -> Result<Vec<(String, Option<String>)>, String> {
-    let results = window_layout::match_and_restore_layout(&layout);
-    Ok(results
-        .into_iter()
-        .map(|(name, result)| (name, result.err()))
-        .collect())
-}
-
-/// Get the system idle time in seconds (time since last user input)
-#[tauri::command]
-async fn get_idle_time() -> Result<u64, String> {
-    #[cfg(windows)]
-    {
-        use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
-
-        unsafe {
-            let mut last_input = LASTINPUTINFO {
-                cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
-                dwTime: 0,
-            };
-
-            if GetLastInputInfo(&mut last_input).as_bool() {
-                let tick_count = windows::Win32::System::SystemInformation::GetTickCount();
-                let idle_ms = tick_count.saturating_sub(last_input.dwTime);
-                Ok((idle_ms / 1000) as u64)
-            } else {
-                Err("Failed to get last input info".to_string())
-            }
-        }
-    }
-
-    #[cfg(not(windows))]
-    {
-        Ok(0)
-    }
-}
-
-#[tauri::command]
-async fn open_desktop_guardian(app: AppHandle) -> Result<(), String> {
-    // Check if window already exists
-    if let Some(window) = app.get_webview_window("desktop-guardian") {
-        window.set_focus().map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
-    let window = WebviewWindowBuilder::new(
-        &app,
-        "desktop-guardian",
-        WebviewUrl::App("index.html".into()),
-    )
-    .title("Desktop Guardian")
-    .inner_size(900.0, 700.0)
-    .min_inner_size(700.0, 500.0)
-    .center()
-    .decorations(true)
-    .resizable(true)
-    .visible(true)
-    .build()
-    .map_err(|e| e.to_string())?;
-
-    // Navigate to desktop guardian route
-    window
-        .eval("window.location.hash = '#/desktop-guardian'")
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-#[tauri::command]
-async fn ensure_current_window_visible(window: tauri::Window) -> Result<(), String> {
-    if window.is_minimized().unwrap_or(false) {
-        window.unminimize().map_err(|e| e.to_string())?;
-    }
-    window.center().map_err(|e| e.to_string())?;
-    window.set_focus().map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 fn open_selection_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     // Use native Win32 selection - no WebView, no flash!
     // The native selection captures ALL monitors and returns the cropped image directly
@@ -1185,32 +932,6 @@ fn open_settings_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error
         .decorations(true)
         .build()?;
 
-    window.set_focus()?;
-    Ok(())
-}
-
-fn open_desktop_guardian_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(window) = app.get_webview_window("desktop-guardian") {
-        window.set_focus()?;
-        return Ok(());
-    }
-
-    let window = WebviewWindowBuilder::new(
-        app,
-        "desktop-guardian",
-        WebviewUrl::App("index.html".into()),
-    )
-    .title("Desktop Guardian")
-    .inner_size(900.0, 700.0)
-    .min_inner_size(700.0, 500.0)
-    .center()
-    .decorations(true)
-    .resizable(true)
-    .visible(true)
-    .build()?;
-
-    // Navigate to desktop guardian route
-    window.eval("window.location.hash = '#/desktop-guardian'")?;
     window.set_focus()?;
     Ok(())
 }
@@ -1442,6 +1163,11 @@ async fn set_panel_keyboard(_app: AppHandle, _window_label: String, _enabled: bo
 }
 
 fn open_quick_paste_window(app: &tauri::AppHandle) -> Result<(), String> {
+    // Snapshot the active window NOW, before the panel opens and COSMIC potentially
+    // shifts focus to the window behind it. This snapshot is used by activate_last_focused().
+    #[cfg(target_os = "linux")]
+    wayland_focus::snapshot_for_paste();
+
     if let Some(window) = app.get_webview_window("quickpaste") {
         window.close().map_err(|e| e.to_string())?;
     }
@@ -1590,14 +1316,13 @@ async fn paste_snippet_item(app: AppHandle, item_id: String) -> Result<(), Strin
 
         #[cfg(not(windows))]
         {
-            // Layer-shell overlay has keyboard_interactivity=false,
-            // so keyboard focus stays on the previous window — just wtype directly.
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            if is_text {
-                type_text(&content);
-            } else {
-                simulate_paste();
-            }
+            // Re-activate the last focused non-Madera window (Linux equivalent of
+            // SetForegroundWindow). Without this, COSMIC shifts focus to the window
+            // directly behind the layer-shell panel on click.
+            wayland_focus::activate_last_focused();
+            std::thread::sleep(std::time::Duration::from_millis(350));
+            // Text is already in clipboard — Ctrl+V preserves Unicode (é, à, etc.)
+            simulate_paste();
         }
     });
 
@@ -1796,12 +1521,10 @@ async fn paste_history_item(app: AppHandle, item_id: String) -> Result<(), Strin
 
         #[cfg(not(windows))]
         {
-            std::thread::sleep(std::time::Duration::from_millis(50));
-            if is_text && !paste_content.is_empty() {
-                type_text(&paste_content);
-            } else {
-                simulate_paste();
-            }
+            wayland_focus::activate_last_focused();
+            std::thread::sleep(std::time::Duration::from_millis(350));
+            // Text is already in clipboard — Ctrl+V preserves Unicode (é, à, etc.)
+            simulate_paste();
         }
     });
 
@@ -2076,14 +1799,22 @@ fn simulate_paste() {
 
 #[cfg(not(windows))]
 fn simulate_paste() {
-    // Try wtype first (Wayland native), fall back to xdotool (X11)
-    let wtype = std::process::Command::new("wtype")
-        .args(["-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"])
-        .spawn();
-    if wtype.is_err() {
-        let _ = std::process::Command::new("xdotool")
-            .args(["key", "ctrl+v"])
-            .spawn();
+    // ydotool injects via kernel uinput — bypasses Wayland focus entirely.
+    // Falls back to wtype (Wayland protocol) then xdotool (X11).
+    let ok = std::process::Command::new("ydotool")
+        .args(["key", "--delay", "0", "ctrl+v"])
+        .spawn()
+        .is_ok();
+    if !ok {
+        let ok2 = std::process::Command::new("wtype")
+            .args(["-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"])
+            .spawn()
+            .is_ok();
+        if !ok2 {
+            let _ = std::process::Command::new("xdotool")
+                .args(["key", "ctrl+v"])
+                .spawn();
+        }
     }
 }
 
@@ -2092,16 +1823,24 @@ fn type_text(text: &str) {
     // Strip Windows \r line endings to avoid extra Enter keypresses
     let clean = text.replace('\r', "");
     let text = clean.as_str();
-    // Type text directly via wtype (works on Wayland regardless of app's paste shortcut)
-    let wtype = std::process::Command::new("wtype")
-        .arg("--")
-        .arg(text)
-        .spawn();
-    if wtype.is_err() {
-        // Fallback: use xdotool type for X11
-        let _ = std::process::Command::new("xdotool")
-            .args(["type", "--clearmodifiers", "--", text])
-            .spawn();
+    // ydotool injects via kernel uinput — bypasses Wayland focus entirely.
+    let ok = std::process::Command::new("ydotool")
+        .args(["type", "--delay", "0", "--key-delay", "2", "--", text])
+        .spawn()
+        .is_ok();
+    if !ok {
+        // Fallback: wtype (Wayland protocol)
+        let ok2 = std::process::Command::new("wtype")
+            .arg("--")
+            .arg(text)
+            .spawn()
+            .is_ok();
+        if !ok2 {
+            // Last resort: xdotool (X11/XWayland)
+            let _ = std::process::Command::new("xdotool")
+                .args(["type", "--clearmodifiers", "--", text])
+                .spawn();
+        }
     }
 }
 
@@ -2179,146 +1918,6 @@ fn simulate_tabby_breakline() {
     // Tabby terminal macro is Windows-only; no-op on other platforms.
 }
 
-/// Settings for Desktop Guardian auto-save
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GuardianSettings {
-    #[serde(rename = "autoSaveEnabled")]
-    auto_save_enabled: bool,
-    #[serde(rename = "autoSaveInterval")]
-    auto_save_interval: u64,
-}
-
-impl Default for GuardianSettings {
-    fn default() -> Self {
-        Self {
-            auto_save_enabled: true,
-            auto_save_interval: 5, // 5 minutes default
-        }
-    }
-}
-
-/// Perform auto-save of window layout (called from background thread)
-/// Uses direct file I/O instead of store plugin for thread safety
-fn perform_auto_save(app: &AppHandle) -> Result<(), String> {
-    use std::fs;
-    use std::io::Write;
-    use std::collections::HashMap;
-
-    // Helper to log to file for debugging
-    fn log_to_file(app_data_dir: &std::path::Path, msg: &str) {
-        let log_path = app_data_dir.join("autosave_debug.log");
-        if let Ok(mut file) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-        {
-            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-            let _ = writeln!(file, "[{}] {}", timestamp, msg);
-        }
-    }
-
-    // Get the app data directory
-    let app_data_dir = app.path().app_config_dir()
-        .map_err(|e| format!("Failed to get app data dir: {}", e))?;
-    let settings_path = app_data_dir.join("settings.json");
-
-    log_to_file(&app_data_dir, &format!("Settings path: {:?}", settings_path));
-    println!("[Auto-save] Settings path: {:?}", settings_path);
-
-    // Read existing settings file
-    log_to_file(&app_data_dir, &format!("Settings exists: {}", settings_path.exists()));
-    let mut settings_data: HashMap<String, serde_json::Value> = if settings_path.exists() {
-        let content = fs::read_to_string(&settings_path)
-            .map_err(|e| format!("Failed to read settings: {}", e))?;
-        serde_json::from_str(&content).unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
-
-    // Load guardian settings
-    let guardian_settings: GuardianSettings = settings_data
-        .get("guardian_settings")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
-
-    log_to_file(&app_data_dir, &format!("Guardian settings: enabled={}, interval={}",
-        guardian_settings.auto_save_enabled, guardian_settings.auto_save_interval));
-
-    // Check if auto-save is enabled
-    if !guardian_settings.auto_save_enabled {
-        log_to_file(&app_data_dir, "Auto-save disabled in settings, skipping");
-        println!("[Auto-save] Disabled in settings, skipping");
-        return Ok(());
-    }
-
-    // Get current windows
-    let windows = window_layout::get_all_windows();
-    log_to_file(&app_data_dir, &format!("Found {} windows", windows.len()));
-
-    // Skip if no windows to save
-    if windows.is_empty() {
-        log_to_file(&app_data_dir, "No windows found, skipping");
-        println!("[Auto-save] No windows found, skipping");
-        return Ok(());
-    }
-
-    // Create new auto-save layout
-    let id = uuid::Uuid::new_v4().to_string();
-    let created_at = chrono::Utc::now().to_rfc3339();
-    let timestamp = chrono::Local::now().format("%b %d, %H:%M");
-
-    let new_layout = window_layout::SavedLayout {
-        id,
-        name: format!("Auto-save {}", timestamp),
-        created_at,
-        windows,
-        is_auto_save: true,
-    };
-
-    // Load existing layouts
-    let mut layouts: Vec<window_layout::SavedLayout> = settings_data
-        .get("desktop_layouts")
-        .and_then(|v| serde_json::from_value(v.clone()).ok())
-        .unwrap_or_default();
-
-    // Remove old auto-saves (keep only last 4 so we can add the new one = 5 total)
-    let mut auto_save_count = 0;
-    layouts.retain(|l| {
-        if l.is_auto_save {
-            auto_save_count += 1;
-            auto_save_count <= 4
-        } else {
-            true // Keep all manual saves
-        }
-    });
-
-    // Add new layout at the beginning (most recent first)
-    layouts.insert(0, new_layout);
-
-    // Update layouts in settings
-    settings_data.insert(
-        "desktop_layouts".to_string(),
-        serde_json::to_value(&layouts).map_err(|e| format!("Failed to serialize: {}", e))?,
-    );
-
-    // Write back to file
-    let json_str = serde_json::to_string_pretty(&settings_data)
-        .map_err(|e| format!("Failed to serialize settings: {}", e))?;
-
-    log_to_file(&app_data_dir, &format!("Writing {} bytes to settings", json_str.len()));
-
-    fs::write(&settings_path, json_str)
-        .map_err(|e| format!("Failed to write settings: {}", e))?;
-
-    log_to_file(&app_data_dir, &format!("SUCCESS: Saved layout with {} windows", layouts[0].windows.len()));
-    println!("[Auto-save] Saved layout with {} windows", layouts[0].windows.len());
-
-    // Emit event so frontend can refresh its layout list
-    let _ = app.emit("layouts-updated", ());
-
-    Ok(())
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -2369,7 +1968,6 @@ pub fn run() {
             should_exit: Mutex::new(false),
             last_paste_time: Mutex::new(None),
             multi_paste_window_open: Mutex::new(false),
-            auto_save_notifier: Mutex::new(None),
             snippet_manager: Arc::new(SnippetManager::new().expect("Failed to init snippet manager")),
         })
         .setup(|app| {
@@ -2396,35 +1994,29 @@ pub fn run() {
                 }
             });
 
+            // --- Background Focus Tracker (Linux/Wayland) ---
+            // Tracks the last active non-Madera toplevel via zcosmic_toplevel_info_v1
+            // so we can re-activate it before paste (equivalent to Windows SetForegroundWindow)
+            #[cfg(target_os = "linux")]
+            wayland_focus::init();
+
             // Check if autostart is enabled to show correct menu state
             let autostart_enabled = {
                 use tauri_plugin_autostart::ManagerExt;
                 app.autolaunch().is_enabled().unwrap_or(false)
             };
 
-            // Load settings from file (persistence) and get guardian_enabled state
-            let guardian_auto_save_enabled = {
+            // Load settings from file
+            {
                 let app_handle = app.handle().clone();
                 if let Ok(loaded_settings) = load_settings_from_file(&app_handle) {
                     let state = app.state::<AppState>();
-                    {
-                        if let Ok(mut s) = state.settings.lock() {
-                            *s = loaded_settings;
-                        }
+                    if let Ok(mut s) = state.settings.lock() {
+                        *s = loaded_settings;
                     }
                     println!("[Settings] Loaded from file");
                 }
-                
-                // Load guardian settings to get initial state
-                app_handle.path().app_config_dir()
-                    .ok()
-                    .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
-                    .and_then(|content| serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&content).ok())
-                    .and_then(|data| data.get("guardian_settings").cloned())
-                    .and_then(|v| serde_json::from_value::<GuardianSettings>(v).ok())
-                    .map(|s| s.auto_save_enabled)
-                    .unwrap_or(true)
-            };
+            }
 
             // Create tray icon
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -2432,14 +2024,11 @@ pub fn run() {
             let colorpicker = MenuItem::with_id(app, "colorpicker", "Pick Color (Ctrl+Shift+X)", true, None::<&str>)?;
             let history = MenuItem::with_id(app, "history", "History (Ctrl+Shift+H)", true, None::<&str>)?;
             let settings_panel = MenuItem::with_id(app, "settings_panel", "⚙️ Settings", true, None::<&str>)?;
-            let desktop_guardian = MenuItem::with_id(app, "desktop_guardian", "Desktop Guardian", true, None::<&str>)?;
             let quick_paste = MenuItem::with_id(app, "quick_paste", "⭐ Quick Prompt Snippets", true, None::<&str>)?;
-            let restore_layout = MenuItem::with_id(app, "restore_layout", "⚡ Restore Last Layout", true, None::<&str>)?;
             let clipboard_monitor = CheckMenuItem::with_id(app, "clipboard_monitor", "Clipboard Monitoring", true, true, None::<&str>)?;
             let autostart_label = if cfg!(windows) { "Start with Windows" } else { "Start at Login" };
             let autostart = CheckMenuItem::with_id(app, "autostart", autostart_label, true, autostart_enabled, None::<&str>)?;
-            let guardian_auto_save = CheckMenuItem::with_id(app, "guardian_auto_save", "Desktop Guardian", true, guardian_auto_save_enabled, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&capture, &colorpicker, &history, &quick_paste, &settings_panel, &desktop_guardian, &restore_layout, &clipboard_monitor, &guardian_auto_save, &autostart, &quit])?;
+            let menu = Menu::with_items(app, &[&capture, &colorpicker, &history, &quick_paste, &settings_panel, &clipboard_monitor, &autostart, &quit])?;
 
             // Load icon
             let icon = Image::from_bytes(include_bytes!("../icons/icon.png"))
@@ -2488,52 +2077,8 @@ pub fn run() {
                         settings.enabled = !settings.enabled;
                         state.clipboard_monitor.update_settings(settings.clone());
                     }
-                    "desktop_guardian" => {
-                        let _ = open_desktop_guardian_window(app);
-                    }
                     "quick_paste" => {
                         let _ = open_quick_paste_window(app);
-                    }
-                    "restore_layout" => {
-                        // Emit event to trigger restore from frontend
-                        let _ = app.emit("restore-last-layout", ());
-                    }
-                    "guardian_auto_save" => {
-                        // Toggle Desktop Guardian auto-save
-                        use std::fs;
-                        use std::collections::HashMap;
-                        
-                        if let Ok(app_data_dir) = app.path().app_config_dir() {
-                            let settings_path = app_data_dir.join("settings.json");
-                            
-                            // Read existing settings
-                            let mut settings_data: HashMap<String, serde_json::Value> = if settings_path.exists() {
-                                fs::read_to_string(&settings_path)
-                                    .ok()
-                                    .and_then(|content| serde_json::from_str(&content).ok())
-                                    .unwrap_or_default()
-                            } else {
-                                HashMap::new()
-                            };
-                            
-                            // Load current guardian settings
-                            let mut guardian_settings: GuardianSettings = settings_data
-                                .get("guardian_settings")
-                                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                                .unwrap_or_default();
-                            
-                            // Toggle the setting
-                            guardian_settings.auto_save_enabled = !guardian_settings.auto_save_enabled;
-                            
-                            // Save back
-                            if let Ok(value) = serde_json::to_value(&guardian_settings) {
-                                settings_data.insert("guardian_settings".to_string(), value);
-                                if let Ok(json_str) = serde_json::to_string_pretty(&settings_data) {
-                                    let _ = fs::write(&settings_path, json_str);
-                                    println!("[Guardian] Auto-save toggled to: {}", guardian_settings.auto_save_enabled);
-                                }
-                            }
-                        }
                     }
                     _ => {}
                 })
@@ -2549,121 +2094,6 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
-
-            // Start sleep/wake monitor
-            let app_handle_sleep = app.handle().clone();
-            std::thread::spawn(move || {
-                monitor_system_power_events(app_handle_sleep);
-            });
-
-            // Start background auto-save for Desktop Guardian
-            let app_handle_autosave = app.handle().clone();
-            
-            // Channel for waking up the auto-save thread
-            let (tx, rx) = std::sync::mpsc::channel();
-            
-            // Store sender in state so power monitor can use it
-            let state = app.state::<AppState>();
-            if let Ok(mut notifier) = state.auto_save_notifier.lock() {
-                *notifier = Some(tx);
-            }
-
-            std::thread::spawn(move || {
-                use std::io::Write;
-
-                // Helper to log to file for debugging
-                fn thread_log(app: &AppHandle, msg: &str) {
-                    if let Ok(app_data_dir) = app.path().app_config_dir() {
-                        let log_path = app_data_dir.join("autosave_debug.log");
-                        if let Ok(mut file) = std::fs::OpenOptions::new()
-                            .create(true)
-                            .append(true)
-                            .open(&log_path)
-                        {
-                            let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
-                            let _ = writeln!(file, "[{}] THREAD: {}", timestamp, msg);
-                        }
-                    }
-                }
-
-                thread_log(&app_handle_autosave, "Auto-save thread started");
-
-                // Wait 30 seconds before first auto-save (give app time to start)
-                std::thread::sleep(std::time::Duration::from_secs(30));
-                thread_log(&app_handle_autosave, "Initial wait complete, starting auto-save loop");
-
-                loop {
-                    // Load interval from settings (default 5 minutes) using direct file I/O
-                    let interval_minutes = app_handle_autosave
-                        .path().app_config_dir()
-                        .ok()
-                        .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
-                        .and_then(|content| serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&content).ok())
-                        .and_then(|data| data.get("guardian_settings").cloned())
-                        .and_then(|v| serde_json::from_value::<GuardianSettings>(v).ok())
-                        .map(|s| s.auto_save_interval)
-                        .unwrap_or(5);
-
-                    thread_log(&app_handle_autosave, &format!("Waiting {} minutes until next auto-save (or wake event)", interval_minutes));
-
-                    // Wait for the configured interval OR a wake-up signal
-                    match rx.recv_timeout(std::time::Duration::from_secs(interval_minutes * 60)) {
-                        Ok(_) => {
-                            thread_log(&app_handle_autosave, "Woke up by notification (System Wake)!");
-                            println!("[Auto-save] Woke up by notification - triggering immediate save check");
-                        },
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                            thread_log(&app_handle_autosave, "Woke up by timeout (Normal Interval)");
-                        },
-                        Err(_) => {
-                            thread_log(&app_handle_autosave, "Channel disconnected, stopping thread");
-                            break;
-                        }
-                    }
-
-
-                    // FAIL-SAFE: Check for user activity (Windows only)
-                    // If the system thinks it's sleeping but the user is active, we missed a wake event!
-                    #[cfg(windows)]
-                    unsafe {
-                        use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
-                        use windows::Win32::System::SystemInformation::GetTickCount;
-
-                        let mut last_input = LASTINPUTINFO {
-                            cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
-                            dwTime: 0,
-                        };
-
-                        if GetLastInputInfo(&mut last_input).as_bool() {
-                            let tick_count = GetTickCount();
-                            let idle_ms = tick_count.saturating_sub(last_input.dwTime);
-
-                            // If user has been active in the last minute (60000ms)
-                            if idle_ms < 60000 {
-                                // And we think we are sleeping...
-                                if IS_SYSTEM_SLEEPING.load(Ordering::SeqCst) {
-                                    thread_log(&app_handle_autosave, "User activity detected while marked as sleeping - forcing wake state!");
-                                    println!("[Auto-save] User activity detected while marked as sleeping - forcing wake state!");
-                                    IS_SYSTEM_SLEEPING.store(false, Ordering::SeqCst);
-                                }
-                            }
-                        }
-                    }
-
-                    // Check if system is sleeping (should be false if woke up by notification)
-                    if IS_SYSTEM_SLEEPING.load(Ordering::SeqCst) {
-                        thread_log(&app_handle_autosave, "Skipping - system is sleeping");
-                        println!("[Auto-save] Skipping - system is sleeping");
-                    } else {
-                        thread_log(&app_handle_autosave, "Calling perform_auto_save...");
-                        // Perform auto-save
-                        if let Err(e) = perform_auto_save(&app_handle_autosave) {
-                            thread_log(&app_handle_autosave, &format!("ERROR: {}", e));
-                            eprintln!("[Auto-save] Error: {}", e);
-                        }
-                    }
-                }
-            });
 
             // Register global shortcut for capture (Ctrl+Shift+S)
             let capture_shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyS);
@@ -2863,14 +2293,6 @@ pub fn run() {
             // Multi-paste commands
             paste_history_item,
             copy_history_item_to_clipboard,
-            // Desktop Guardian commands
-            get_desktop_monitors,
-            get_current_window_layout,
-            save_window_layout,
-            restore_window_layout,
-            get_idle_time,
-            open_desktop_guardian,
-            ensure_current_window_visible,
             // SSH Upload command
             upload_to_dev_server,
             get_snippets,

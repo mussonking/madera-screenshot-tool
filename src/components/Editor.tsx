@@ -82,7 +82,9 @@ export default function Editor() {
 
   const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type, visible: true });
-    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), 3000);
+    // Errors stay longer (8s) than success/info (3s) for better readability
+    const duration = type === 'error' ? 8000 : 3000;
+    setTimeout(() => setToast(prev => ({ ...prev, visible: false })), duration);
   };
 
   const theme = THEMES[currentTheme];
@@ -799,8 +801,30 @@ export default function Editor() {
       // Optional: close window after upload
       // await closeWindow();
     } catch (err) {
-      console.error("Upload failed:", err);
-      showNotification(`Erreur: ${err}`, 'error');
+      const errorMsg = String(err);
+      console.error("Upload failed:", errorMsg);
+
+      // Parse and display SSH error messages clearly
+      let displayMsg = errorMsg;
+      if (errorMsg.includes("SSH upload not enabled")) {
+        displayMsg = "⚠️ Upload SSH désactivé. Activez-le dans Paramètres > SSH Upload";
+      } else if (errorMsg.includes("SSH host not configured")) {
+        displayMsg = "⚠️ Serveur SSH non configuré. Entrez votre hôte SSH dans Paramètres";
+      } else if (errorMsg.includes("SSH remote path not configured")) {
+        displayMsg = "⚠️ Chemin distant SSH non configuré. Entrez le chemin dans Paramètres";
+      } else if (errorMsg.includes("Authentication failed") || errorMsg.includes("AuthFailed")) {
+        displayMsg = "❌ Authentification SSH échouée. Vérifiez vos clés SSH et la configuration.";
+      } else if (errorMsg.includes("Cannot connect to") || errorMsg.includes("ConnectionFailed")) {
+        displayMsg = `❌ Impossible de se connecter au serveur. Vérifiez l'adresse du serveur et votre connexion réseau.`;
+      } else if (errorMsg.includes("scp not found")) {
+        displayMsg = "❌ scp n'est pas installé. Installez OpenSSH sur votre système.";
+      } else if (errorMsg.includes("SSH upload failed")) {
+        displayMsg = `❌ Erreur SSH: ${errorMsg}`;
+      } else if (errorMsg.includes("Base64 decode failed")) {
+        displayMsg = "❌ Erreur interne: impossible de traiter l'image";
+      }
+
+      showNotification(displayMsg, 'error');
     } finally {
       setIsUploading(false);
     }
@@ -1274,7 +1298,7 @@ export default function Editor() {
           <Save size={18} />
           Save
         </button>
-        {/* CLI Upload Button */}
+        {/* SSH Upload Button */}
         <button
           onClick={uploadToCLI}
           disabled={isUploading}
@@ -1284,10 +1308,10 @@ export default function Editor() {
             opacity: isUploading ? 0.5 : 1,
           }}
           className="px-6 py-2 text-white hover:opacity-80 transition-colors flex items-center gap-2 font-medium"
-          title="Upload to DEV Server and copy path"
+          title="Upload to SSH server and copy path"
         >
           <Upload size={18} />
-          {isUploading ? "Uploading..." : "CLI"}
+          {isUploading ? "Uploading..." : "SSH"}
         </button>
         <button
           onClick={async () => {
@@ -1318,15 +1342,15 @@ export default function Editor() {
       </div>
       {/* Toast Notification */}
       <div
-        className={`fixed bottom-8 left-1/2 transform -translate-x-1/2 px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 transition-all duration-300 z-50 ${toast.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
+        className={`fixed bottom-8 left-1/2 transform -translate-x-1/2 px-6 py-4 rounded-xl shadow-2xl flex items-start gap-3 transition-all duration-300 z-50 max-w-md ${toast.visible ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4 pointer-events-none'
           } ${toast.type === 'success' ? 'bg-green-500 text-white' :
-            toast.type === 'error' ? 'bg-red-500 text-white' :
+            toast.type === 'error' ? 'bg-red-600 text-white border-2 border-red-700' :
               'bg-slate-800 text-white'
           }`}
       >
-        {toast.type === 'success' && <Sparkles size={20} />}
-        {toast.type === 'error' && <X size={20} />}
-        <span className="font-medium">{toast.message}</span>
+        {toast.type === 'success' && <Sparkles size={20} className="flex-shrink-0 mt-0.5" />}
+        {toast.type === 'error' && <X size={20} className="flex-shrink-0 mt-0.5" />}
+        <span className="font-medium leading-snug text-sm">{toast.message}</span>
       </div>
     </div>
   );

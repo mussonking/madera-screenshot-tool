@@ -45,6 +45,9 @@ x11 = { version = "2.21", features = ["xlib"] }
 gtk = "0.18"
 gdk = "0.18"
 gtk-layer-shell = { version = "0.8", features = ["v0_6"] }
+cosmic-protocols = { version = "0.2", features = ["client"] }
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["staging"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

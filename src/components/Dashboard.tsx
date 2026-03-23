@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Camera, Palette, Shield, LayoutDashboard, Settings, Copy, Clipboard } from 'lucide-react';
+import { Camera, Palette, Settings, Copy, Clipboard, LayoutDashboard } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import History from './History';
 import SettingsModal from './SettingsModal';
@@ -27,12 +27,6 @@ export default function Dashboard() {
       name: 'Colors',
       icon: Palette,
       action: () => invoke('trigger_color_picker'),
-    },
-    {
-      id: 'desktop-guardian',
-      name: 'Guardian',
-      icon: Shield,
-      action: () => invoke('open_desktop_guardian'),
     },
     {
       id: 'quick-paste',
