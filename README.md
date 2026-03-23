@@ -25,7 +25,7 @@ Every AI conversation starts the same way: *"here's a screenshot of..."*
 
 Madera was built for developers who live in AI-assisted workflows. One hotkey captures your screen, opens a full annotation editor, and copies the result to your clipboard -- ready to paste into Claude, ChatGPT, or any AI tool. No save dialogs. No file management. Just capture and paste.
 
-But Madera goes further. It's a **clipboard powerhouse** with unified history, QuickPaste snippets, a color picker, and a desktop window layout manager -- all wrapped in 11 gorgeous themes and running at native speed thanks to Tauri 2 + Rust.
+But Madera goes further. It's a **clipboard powerhouse** with unified history, QuickPaste snippets, and a color picker -- all wrapped in 11 gorgeous themes and running at native speed thanks to Tauri 2 + Rust.
 
 **~6MB binary. Zero Electron. Pure performance.**
 
@@ -61,12 +61,7 @@ But Madera goes further. It's a **clipboard powerhouse** with unified history, Q
 - **All formats** -- HEX (upper/lower), RGB, HSL
 - **Color history** -- every pick is saved and searchable
 
-### Desktop Guardian
 
-- **Save window layouts** -- snapshot the position and size of every window
-- **One-click restore** -- get your workspace back after a reboot or monitor change
-- **Auto-save** -- configurable interval keeps your layout safe automatically
-- **Multi-monitor aware** -- tracks which window belongs to which display
 
 ### 11 Themes
 
@@ -154,7 +149,6 @@ madera-screenshot-tool/
       Dashboard.tsx             # Main app screen
       History.tsx               # Unified clipboard history
       QuickPasteModal.tsx       # Snippet selector overlay
-      DesktopGuardian.tsx       # Window layout manager
       SettingsModal.tsx         # App preferences + theme picker
       ColorPicker.tsx           # Pixel color sampler
     utils/
@@ -166,7 +160,7 @@ madera-screenshot-tool/
     history.rs                  # SQLite history management
     clipboard_monitor.rs        # Background clipboard watcher
     native_selection.rs         # Platform-specific screen capture
-    window_layout.rs            # Desktop window enumeration/restore
+    wayland_focus.rs            # Wayland window focus utilities
     color_picker.rs             # Pixel sampling + magnifier
 ```
 
