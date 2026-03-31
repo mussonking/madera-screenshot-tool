@@ -87,6 +87,7 @@ pub struct ClipboardMonitor {
     skip_next: Arc<AtomicBool>,
     last_content_hash: Arc<std::sync::Mutex<u64>>,
     settings: Arc<std::sync::Mutex<ClipboardSettings>>,
+    no_change_count: Arc<std::sync::atomic::AtomicU32>,
 }
 
 impl ClipboardMonitor {
@@ -97,6 +98,7 @@ impl ClipboardMonitor {
             skip_next: Arc::new(AtomicBool::new(false)),
             last_content_hash: Arc::new(std::sync::Mutex::new(0)),
             settings: Arc::new(std::sync::Mutex::new(ClipboardSettings::default())),
+            no_change_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         }
     }
 
@@ -139,6 +141,7 @@ impl ClipboardMonitor {
         let skip_next = Arc::clone(&self.skip_next);
         let last_hash = Arc::clone(&self.last_content_hash);
         let settings = Arc::clone(&self.settings);
+        let no_change_count = Arc::clone(&self.no_change_count);
 
         thread::spawn(move || {
             let mut clipboard = match Clipboard::new() {
@@ -164,6 +167,7 @@ impl ClipboardMonitor {
                 let mut last = last_hash.lock().unwrap();
                 if content_hash != *last {
                     *last = content_hash;
+                    no_change_count.store(0, Ordering::Relaxed);
 
                     if skip_next.swap(false, Ordering::SeqCst) {
                         drop(last);
@@ -178,10 +182,23 @@ impl ClipboardMonitor {
                             callback(content);
                         }
                     }
+                } else {
+                    // No change detected - use adaptive polling
+                    let count = no_change_count.fetch_add(1, Ordering::Relaxed);
+                    drop(last);
+                    
+                    // Adaptive sleep based on inactivity
+                    let sleep_ms = match count {
+                        0..=10 => 300,   // Active: poll fast
+                        11..=30 => 500,  // Calm: slow down
+                        _ => 1000        // Inactive: poll slow
+                    };
+                    thread::sleep(Duration::from_millis(sleep_ms));
+                    continue;
                 }
                 drop(last);
 
-                // Poll every 300ms - lightweight but responsive
+                // Poll every 300ms when active
                 thread::sleep(Duration::from_millis(300));
             }
         });
