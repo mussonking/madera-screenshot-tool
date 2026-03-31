@@ -108,7 +108,7 @@ impl Default for AppSettings {
         Self {
             hotkey: "Ctrl+Shift+S".to_string(),
             auto_copy: true,
-            max_history: 150,
+            max_history: 100,
             max_image_width: Some(1568),
             ssh_enabled: true,
             ssh_servers: vec![SshServer {
