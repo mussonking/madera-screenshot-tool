@@ -198,6 +198,49 @@ impl ClipboardMonitor {
     }
 
     fn read_clipboard_content(clipboard: &mut Clipboard) -> ClipboardContent {
+        // On Wayland, arboard's background-thread clipboard reading is unreliable
+        // because the Wayland event loop is not driven from this thread.
+        // Use wl-paste (wl-clipboard) instead — it works from any process.
+        #[cfg(target_os = "linux")]
+        if std::env::var("WAYLAND_DISPLAY").is_ok() {
+            return Self::read_clipboard_wayland(clipboard);
+        }
+
+        // X11 / Windows / macOS: use arboard directly
+        Self::read_clipboard_arboard(clipboard)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn read_clipboard_wayland(clipboard: &mut Clipboard) -> ClipboardContent {
+        // Try text via wl-paste (reliable from background threads)
+        if let Ok(output) = std::process::Command::new("wl-paste")
+            .args(["--no-newline"])
+            .output()
+        {
+            if output.status.success() && !output.stdout.is_empty() {
+                if let Ok(text) = String::from_utf8(output.stdout) {
+                    if !text.is_empty() {
+                        return ClipboardContent::Text(text);
+                    }
+                }
+            }
+        }
+
+        // wl-paste failed (clipboard has image or is empty) — try arboard for image
+        if let Ok(image) = clipboard.get_image() {
+            if !image.bytes.is_empty() {
+                return ClipboardContent::Image {
+                    data: image.bytes.to_vec(),
+                    width: image.width,
+                    height: image.height,
+                };
+            }
+        }
+
+        ClipboardContent::Empty
+    }
+
+    fn read_clipboard_arboard(clipboard: &mut Clipboard) -> ClipboardContent {
         // Try to get text first (most common)
         if let Ok(text) = clipboard.get_text() {
             if !text.is_empty() {

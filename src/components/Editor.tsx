@@ -27,6 +27,7 @@ import {
   Maximize2,
   LayoutGrid,
   Upload,
+  ChevronDown,
 } from "lucide-react";
 
 type Tool =
@@ -78,6 +79,9 @@ export default function Editor() {
   const [baseCanvasSize, setBaseCanvasSize] = useState({ width: 0, height: 0 });
   const [zoom, setZoom] = useState(1);
   const [isUploading, setIsUploading] = useState(false);
+  const [sshServers, setSshServers] = useState<Array<{ id: string; name: string; host: string }>>([]);
+  const [showSshMenu, setShowSshMenu] = useState(false);
+  const sshMenuRef = useRef<HTMLDivElement>(null);
   const [toast, setToast] = useState<Toast>({ message: '', type: 'info', visible: false });
 
   const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
@@ -97,14 +101,32 @@ export default function Editor() {
   // Ref for copyToClipboard to be accessible in global event listener
   const copyToClipboardRef = useRef<() => void>(() => { });
 
-  // Load theme from store on mount
+  // Load theme and SSH servers on mount
   useEffect(() => {
     loadThemeFromStore().then((savedTheme) => {
       setCurrentTheme(savedTheme);
-      // Keep bright red as default - don't change color based on theme
       setThemeLoaded(true);
     });
+    invoke<{ ssh_enabled: boolean; ssh_servers: Array<{ id: string; name: string; host: string }> }>('get_settings')
+      .then((s) => {
+        if (s.ssh_enabled && s.ssh_servers?.length) {
+          setSshServers(s.ssh_servers);
+        }
+      })
+      .catch(() => {});
   }, []);
+
+  // Close SSH menu on outside click
+  useEffect(() => {
+    if (!showSshMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (sshMenuRef.current && !sshMenuRef.current.contains(e.target as Node)) {
+        setShowSshMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showSshMenu]);
 
   // Listen for global copy event (Ctrl+P from anywhere)
   useEffect(() => {
@@ -788,11 +810,12 @@ export default function Editor() {
     }
   };
 
-  const uploadToCLI = async () => {
+  const uploadToCLI = async (serverId: string) => {
+    setShowSshMenu(false);
     try {
       setIsUploading(true);
       const imageData = await getExportedImage();
-      const remotePath = await invoke<string>('upload_to_dev_server', { imageData });
+      const remotePath = await invoke<string>('upload_to_dev_server', { imageData, serverId });
 
       // Show success notification
       console.log(`✅ Uploaded! Path copied: ${remotePath}`);
@@ -1298,21 +1321,53 @@ export default function Editor() {
           <Save size={18} />
           Save
         </button>
-        {/* SSH Upload Button */}
-        <button
-          onClick={uploadToCLI}
-          disabled={isUploading}
-          style={{
-            backgroundColor: "#10b981",
-            borderRadius: theme.borderRadius,
-            opacity: isUploading ? 0.5 : 1,
-          }}
-          className="px-6 py-2 text-white hover:opacity-80 transition-colors flex items-center gap-2 font-medium"
-          title="Upload to SSH server and copy path"
-        >
-          <Upload size={18} />
-          {isUploading ? "Uploading..." : "SSH"}
-        </button>
+        {/* SSH Upload Button / Dropdown */}
+        {sshServers.length > 0 && (
+          <div className="relative" ref={sshMenuRef}>
+            {sshServers.length === 1 ? (
+              <button
+                onClick={() => uploadToCLI(sshServers[0].id)}
+                disabled={isUploading}
+                style={{ backgroundColor: "#10b981", borderRadius: theme.borderRadius, opacity: isUploading ? 0.5 : 1 }}
+                className="px-6 py-2 text-white hover:opacity-80 transition-colors flex items-center gap-2 font-medium"
+                title={`Upload to ${sshServers[0].name || sshServers[0].host}`}
+              >
+                <Upload size={18} />
+                {isUploading ? "Uploading..." : "SSH"}
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => setShowSshMenu(!showSshMenu)}
+                  disabled={isUploading}
+                  style={{ backgroundColor: "#10b981", borderRadius: theme.borderRadius, opacity: isUploading ? 0.5 : 1 }}
+                  className="px-4 py-2 text-white hover:opacity-80 transition-colors flex items-center gap-1.5 font-medium"
+                >
+                  <Upload size={18} />
+                  {isUploading ? "Uploading..." : "SSH"}
+                  <ChevronDown size={14} />
+                </button>
+                {showSshMenu && (
+                  <div
+                    className="absolute right-0 bottom-full mb-1 z-50 min-w-[160px] rounded-xl overflow-hidden shadow-xl border border-slate-600"
+                    style={{ backgroundColor: theme.toolbar }}
+                  >
+                    {sshServers.map((server) => (
+                      <button
+                        key={server.id}
+                        onClick={() => uploadToCLI(server.id)}
+                        className="w-full px-4 py-2.5 text-left text-sm hover:bg-emerald-600 transition-colors"
+                        style={{ color: theme.textColor }}
+                      >
+                        {server.name || server.host}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
         <button
           onClick={async () => {
             await invoke("open_history_panel");

@@ -1,12 +1,18 @@
 import { useState, useEffect } from 'react';
-import { Settings, Copy, Monitor, Palette, Upload, Keyboard } from 'lucide-react';
+import { Settings, Copy, Monitor, Palette, Upload, Keyboard, Plus, Trash2, Pencil, Check, X } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { THEMES, ThemeName, loadThemeFromStore, saveThemeToStore } from '../utils/theme';
 
 interface SettingsModalProps {
     isOpen: boolean;
     onClose: () => void;
-    // Passing these so the modal can update parent state if needed, or it can fetch its own
+}
+
+interface SshServer {
+    id: string;
+    name: string;
+    host: string;
+    remote_path: string;
 }
 
 interface AppSettings {
@@ -15,8 +21,7 @@ interface AppSettings {
     max_history: number;
     max_image_width: number | null;
     ssh_enabled: boolean;
-    ssh_host: string;
-    ssh_remote_path: string;
+    ssh_servers: SshServer[];
 }
 
 interface ClipboardSettings {
@@ -38,9 +43,11 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
         max_history: 150,
         max_image_width: 1568,
         ssh_enabled: false,
-        ssh_host: '',
-        ssh_remote_path: '',
+        ssh_servers: [],
     });
+    const [editingServer, setEditingServer] = useState<SshServer | null>(null);
+    const [addingServer, setAddingServer] = useState(false);
+    const [newServer, setNewServer] = useState<Omit<SshServer, 'id'>>({ name: '', host: '', remote_path: '' });
 
     const [clipboardSettings, setClipboardSettings] = useState<ClipboardSettings>({
         enabled: true,
@@ -187,7 +194,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                     <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
                                         <label className="flex items-center justify-between cursor-pointer">
                                             <div>
-                                                <div className="text-white font-medium">Start with Windows</div>
+                                                <div className="text-white font-medium">Start at Login</div>
                                                 <div className="text-sm text-slate-400">Launch Madera.Tools automatically when you log in</div>
                                             </div>
                                             <div className={`w-11 h-6 rounded-full transition-colors relative ${isAutostart ? 'bg-blue-500' : 'bg-slate-600'}`}>
@@ -299,53 +306,115 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                     </h3>
 
                                     <div className="space-y-4">
+                                        {/* Master toggle */}
                                         <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50">
                                             <label className="flex items-center justify-between cursor-pointer">
                                                 <div>
                                                     <div className="text-white font-medium">Enable SSH Upload</div>
-                                                    <div className="text-sm text-slate-400">Show upload button in editor to send images to remote server</div>
+                                                    <div className="text-sm text-slate-400">Show upload button in editor</div>
                                                 </div>
                                                 <div className={`w-11 h-6 rounded-full transition-colors relative ${appSettings.ssh_enabled ? 'bg-cyan-500' : 'bg-slate-600'}`}>
                                                     <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${appSettings.ssh_enabled ? 'left-6' : 'left-1'}`} />
-                                                    <input
-                                                        type="checkbox"
-                                                        className="hidden"
-                                                        checked={appSettings.ssh_enabled}
-                                                        onChange={(e) => saveAppSettings({ ...appSettings, ssh_enabled: e.target.checked })}
-                                                    />
+                                                    <input type="checkbox" className="hidden" checked={appSettings.ssh_enabled}
+                                                        onChange={(e) => saveAppSettings({ ...appSettings, ssh_enabled: e.target.checked })} />
                                                 </div>
                                             </label>
                                         </div>
 
-                                        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50 space-y-4">
-                                            <div>
-                                                <label className="block text-sm font-medium text-slate-300 mb-2">
-                                                    SSH Host (IP or Hostname)
-                                                </label>
-                                                <input
-                                                    type="text"
-                                                    value={appSettings.ssh_host}
-                                                    onChange={(e) => saveAppSettings({ ...appSettings, ssh_host: e.target.value })}
-                                                    placeholder="e.g. user@192.168.1.100"
-                                                    disabled={!appSettings.ssh_enabled}
-                                                    className="w-full px-4 py-2 bg-slate-900/80 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 disabled:opacity-50"
-                                                />
-                                            </div>
+                                        {/* Server list */}
+                                        <div className="space-y-2">
+                                            {appSettings.ssh_servers.map((server) => (
+                                                <div key={server.id} className="bg-slate-800/50 rounded-xl border border-slate-700/50 overflow-hidden">
+                                                    {editingServer?.id === server.id ? (
+                                                        <div className="p-4 space-y-3">
+                                                            <input type="text" placeholder="Name (e.g. Mac Mini)"
+                                                                value={editingServer.name}
+                                                                onChange={(e) => setEditingServer({ ...editingServer, name: e.target.value })}
+                                                                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-500" />
+                                                            <input type="text" placeholder="user@192.168.1.100"
+                                                                value={editingServer.host}
+                                                                onChange={(e) => setEditingServer({ ...editingServer, host: e.target.value })}
+                                                                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-500" />
+                                                            <input type="text" placeholder="/home/user/downloads"
+                                                                value={editingServer.remote_path}
+                                                                onChange={(e) => setEditingServer({ ...editingServer, remote_path: e.target.value })}
+                                                                className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-500" />
+                                                            <div className="flex gap-2">
+                                                                <button onClick={() => {
+                                                                    const updated = appSettings.ssh_servers.map(s => s.id === editingServer.id ? editingServer : s);
+                                                                    saveAppSettings({ ...appSettings, ssh_servers: updated });
+                                                                    setEditingServer(null);
+                                                                }} className="flex items-center gap-1 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg">
+                                                                    <Check size={14} /> Save
+                                                                </button>
+                                                                <button onClick={() => setEditingServer(null)}
+                                                                    className="flex items-center gap-1 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg">
+                                                                    <X size={14} /> Cancel
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <div className="p-4 flex items-center justify-between">
+                                                            <div>
+                                                                <div className="text-white font-medium text-sm">{server.name || server.host}</div>
+                                                                <div className="text-slate-400 text-xs mt-0.5">{server.host}</div>
+                                                                <div className="text-slate-500 text-xs">{server.remote_path}</div>
+                                                            </div>
+                                                            <div className="flex gap-2">
+                                                                <button onClick={() => setEditingServer({ ...server })}
+                                                                    className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
+                                                                    <Pencil size={14} />
+                                                                </button>
+                                                                <button onClick={() => {
+                                                                    const updated = appSettings.ssh_servers.filter(s => s.id !== server.id);
+                                                                    saveAppSettings({ ...appSettings, ssh_servers: updated });
+                                                                }} className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition-colors">
+                                                                    <Trash2 size={14} />
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            ))}
 
-                                            <div>
-                                                <label className="block text-sm font-medium text-slate-300 mb-2">
-                                                    Remote Directory Path
-                                                </label>
-                                                <input
-                                                    type="text"
-                                                    value={appSettings.ssh_remote_path}
-                                                    onChange={(e) => saveAppSettings({ ...appSettings, ssh_remote_path: e.target.value })}
-                                                    placeholder="/home/user/downloads"
-                                                    disabled={!appSettings.ssh_enabled}
-                                                    className="w-full px-4 py-2 bg-slate-900/80 border border-slate-600 rounded-lg text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500 disabled:opacity-50"
-                                                />
-                                            </div>
-
+                                            {/* Add server form */}
+                                            {addingServer ? (
+                                                <div className="bg-slate-800/50 rounded-xl border border-cyan-500/40 p-4 space-y-3">
+                                                    <div className="text-sm font-medium text-cyan-400 mb-1">New Server</div>
+                                                    <input type="text" placeholder="Name (e.g. Mac Mini)"
+                                                        value={newServer.name}
+                                                        onChange={(e) => setNewServer({ ...newServer, name: e.target.value })}
+                                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-500" />
+                                                    <input type="text" placeholder="user@192.168.1.100"
+                                                        value={newServer.host}
+                                                        onChange={(e) => setNewServer({ ...newServer, host: e.target.value })}
+                                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-500" />
+                                                    <input type="text" placeholder="/home/user/downloads"
+                                                        value={newServer.remote_path}
+                                                        onChange={(e) => setNewServer({ ...newServer, remote_path: e.target.value })}
+                                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-600 rounded-lg text-white text-sm focus:outline-none focus:border-cyan-500" />
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => {
+                                                            if (!newServer.host) return;
+                                                            const server: SshServer = { id: crypto.randomUUID(), ...newServer };
+                                                            saveAppSettings({ ...appSettings, ssh_servers: [...appSettings.ssh_servers, server] });
+                                                            setAddingServer(false);
+                                                            setNewServer({ name: '', host: '', remote_path: '' });
+                                                        }} className="flex items-center gap-1 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg">
+                                                            <Check size={14} /> Add
+                                                        </button>
+                                                        <button onClick={() => { setAddingServer(false); setNewServer({ name: '', host: '', remote_path: '' }); }}
+                                                            className="flex items-center gap-1 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-sm rounded-lg">
+                                                            <X size={14} /> Cancel
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <button onClick={() => setAddingServer(true)}
+                                                    className="w-full flex items-center justify-center gap-2 px-4 py-3 border border-dashed border-slate-600 hover:border-cyan-500 hover:text-cyan-400 text-slate-400 rounded-xl transition-colors text-sm">
+                                                    <Plus size={16} /> Add Server
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 </section>

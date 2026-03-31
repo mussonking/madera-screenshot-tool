@@ -262,12 +262,13 @@ impl HistoryManager {
         let img = image::load_from_memory(&image_bytes)
             .map_err(|e| HistoryError::ImageError(e.to_string()))?;
 
-        let thumbnail = img.thumbnail(200, 200);
+        let thumbnail = img.thumbnail(150, 150);
         let thumbnail_path = self.thumbnails_dir.join(&thumbnail_filename);
 
         let mut thumb_buffer = Cursor::new(Vec::new());
-        thumbnail
-            .write_to(&mut thumb_buffer, ImageFormat::Jpeg)
+        use image::codecs::jpeg::JpegEncoder;
+        let mut encoder = JpegEncoder::new_with_quality(&mut thumb_buffer, 70);
+        encoder.encode_image(&thumbnail)
             .map_err(|e| HistoryError::ImageError(e.to_string()))?;
 
         fs::write(&thumbnail_path, thumb_buffer.get_ref())?;
@@ -556,12 +557,13 @@ impl HistoryManager {
         let img = image::load_from_memory(&image_bytes)
             .map_err(|e| HistoryError::ImageError(e.to_string()))?;
 
-        let thumbnail = img.thumbnail(200, 200);
+        let thumbnail = img.thumbnail(150, 150);
         let thumbnail_path = self.thumbnails_dir.join(&thumbnail_filename);
 
         let mut thumb_buffer = Cursor::new(Vec::new());
-        thumbnail
-            .write_to(&mut thumb_buffer, ImageFormat::Jpeg)
+        use image::codecs::jpeg::JpegEncoder;
+        let mut encoder = JpegEncoder::new_with_quality(&mut thumb_buffer, 70);
+        encoder.encode_image(&thumbnail)
             .map_err(|e| HistoryError::ImageError(e.to_string()))?;
 
         fs::write(&thumbnail_path, thumb_buffer.get_ref())?;

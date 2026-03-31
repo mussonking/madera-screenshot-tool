@@ -1,0 +1,1 @@
+/home/musson/.claude/explained/LLM-OPTIMIZED-EXPLAINED.md

@@ -82,12 +82,25 @@ pub struct AppSettings {
     pub auto_copy: bool,
     pub max_history: usize,
     pub max_image_width: Option<u32>,
-    // SSH Upload settings (assumes SSH key already configured)
+    // SSH Upload settings
     pub ssh_enabled: bool,
+    #[serde(default)]
+    pub ssh_servers: Vec<SshServer>,
+    // Legacy single-server fields (kept for migration from old settings files)
+    #[serde(default)]
     pub ssh_host: String,
+    #[serde(default)]
     pub ssh_remote_path: String,
     #[serde(default)]
     pub ssh_passphrase: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshServer {
+    pub id: String,
+    pub name: String,
+    pub host: String,
+    pub remote_path: String,
 }
 
 impl Default for AppSettings {
@@ -96,10 +109,16 @@ impl Default for AppSettings {
             hotkey: "Ctrl+Shift+S".to_string(),
             auto_copy: true,
             max_history: 150,
-            max_image_width: Some(1568), // Optimal for Claude
+            max_image_width: Some(1568),
             ssh_enabled: true,
-            ssh_host: "mad@192.168.2.71".to_string(),
-            ssh_remote_path: "/home/mad/.claude/downloads".to_string(),
+            ssh_servers: vec![SshServer {
+                id: "default".to_string(),
+                name: "Mac Mini".to_string(),
+                host: "mad@192.168.2.71".to_string(),
+                remote_path: "/home/mad/.claude/downloads".to_string(),
+            }],
+            ssh_host: String::new(),
+            ssh_remote_path: String::new(),
             ssh_passphrase: String::new(),
         }
     }
@@ -126,53 +145,67 @@ pub struct CaptureResult {
 async fn upload_to_dev_server(
     state: State<'_, AppState>,
     image_data: String,
+    server_id: String,
 ) -> Result<String, String> {
     use base64::Engine;
-    
-    // Scoped lock to avoid holding it during long network operation
-    let (enabled, host, remote_path, passphrase) = {
+
+    let (enabled, server, passphrase) = {
         let settings = state.settings.lock().map_err(|e| e.to_string())?;
-        (settings.ssh_enabled, settings.ssh_host.clone(), settings.ssh_remote_path.clone(), settings.ssh_passphrase.clone())
+        if !settings.ssh_enabled {
+            return Err("SSH upload not enabled - enable it in Settings".to_string());
+        }
+        // Find the requested server; fall back to legacy single-server config
+        let server = settings.ssh_servers.iter()
+            .find(|s| s.id == server_id)
+            .cloned()
+            .or_else(|| {
+                // Migrate legacy single-server config on the fly
+                if !settings.ssh_host.is_empty() {
+                    Some(SshServer {
+                        id: "legacy".to_string(),
+                        name: "Server".to_string(),
+                        host: settings.ssh_host.clone(),
+                        remote_path: settings.ssh_remote_path.clone(),
+                    })
+                } else {
+                    None
+                }
+            });
+        (settings.ssh_enabled, server, settings.ssh_passphrase.clone())
     };
-    
+
     if !enabled {
         return Err("SSH upload not enabled - enable it in Settings".to_string());
     }
 
-    if host.is_empty() {
-        return Err("SSH host not configured - enter your server address in Settings > SSH Upload".to_string());
+    let server = server.ok_or("SSH server not found - check your SSH settings")?;
+
+    if server.host.is_empty() {
+        return Err("SSH host not configured".to_string());
+    }
+    if server.remote_path.is_empty() {
+        return Err("Remote path not configured".to_string());
     }
 
-    if remote_path.is_empty() {
-        return Err("Remote directory path not configured - enter the destination path in Settings > SSH Upload".to_string());
-    }
-
-    // Generate filename with timestamp
     let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
     let filename = format!("screenshot_{}.png", timestamp);
-    
-    // Build full remote path - ensure no double slashes if user added trailing slash
-    let base_path = remote_path.trim_end_matches('/');
+    let base_path = server.remote_path.trim_end_matches('/');
     let full_remote_path = format!("{}/{}", base_path, filename);
-    
-    // Decode image
+
     let data = base64::engine::general_purpose::STANDARD
         .decode(&image_data)
         .map_err(|e| format!("Base64 decode failed: {}", e))?;
-    
-    // Upload via SSH (uses system's default SSH key)
-    let uploader = ssh_uploader::SshUploader::new(host.clone());
-    
+
+    let uploader = ssh_uploader::SshUploader::new(server.host.clone());
     uploader.upload_file(&data, &full_remote_path, &passphrase)
         .map_err(|e| format!("SSH upload failed: {}", e))?;
-    
-    // Copy full path to clipboard
+
     {
         let mut clipboard_manager = state.clipboard_manager.lock().map_err(|e| e.to_string())?;
         clipboard_manager.copy_text_to_clipboard(&full_remote_path)
             .map_err(|e| e.to_string())?;
     }
-    
+
     Ok(full_remote_path)
 }
 
@@ -311,7 +344,19 @@ fn load_settings_from_file(app: &AppHandle) -> Result<AppSettings, String> {
     // we need to be careful not to overwrite other keys.
     
     if let Some(val) = json.get("app_settings") {
-        serde_json::from_value(val.clone()).map_err(|e| e.to_string())
+        let mut settings: AppSettings = serde_json::from_value(val.clone()).map_err(|e| e.to_string())?;
+        // Migrate legacy single-server config to ssh_servers list
+        if settings.ssh_servers.is_empty() && !settings.ssh_host.is_empty() {
+            settings.ssh_servers = vec![SshServer {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: "Server".to_string(),
+                host: settings.ssh_host.clone(),
+                remote_path: settings.ssh_remote_path.clone(),
+            }];
+            settings.ssh_host = String::new();
+            settings.ssh_remote_path = String::new();
+        }
+        Ok(settings)
     } else {
         Ok(AppSettings::default())
     }
