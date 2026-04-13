@@ -3,18 +3,19 @@
   <img src="https://img.shields.io/badge/Frontend-React_18-61DAFB?style=for-the-badge&logo=react&logoColor=white" alt="React" />
   <img src="https://img.shields.io/badge/Backend-Rust-DEA584?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
   <img src="https://img.shields.io/badge/Canvas-Fabric.js_6-FF6600?style=for-the-badge" alt="Fabric.js" />
+  <img src="https://img.shields.io/badge/OCR-Tesseract.js-4285F4?style=for-the-badge" alt="Tesseract.js" />
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License" />
 </p>
 
-<h1 align="center">Madera Screenshot Tool</h1>
+<h1 align="center">Madera.Tools</h1>
 
 <p align="center">
-  <strong>The ultimate screenshot & annotation tool built for the AI era.</strong>
+  <strong>The screenshot tool built for the AI era.</strong>
   <br />
-  Capture. Annotate. Paste. Share with AI. All in one keystroke.
+  Capture. Annotate. Extract. Paste into Claude, ChatGPT, or any AI. One keystroke.
   <br />
   <br />
-  <a href="#installation">Install</a> &middot; <a href="#features">Features</a> &middot; <a href="#themes">Themes</a> &middot; <a href="#quickpaste">QuickPaste</a> &middot; <a href="#architecture">Architecture</a>
+  <a href="#installation">Install</a> &middot; <a href="#features">Features</a> &middot; <a href="#ai-optimized">AI-Optimized</a> &middot; <a href="#quickpaste">QuickPaste</a> &middot; <a href="#themes">Themes</a> &middot; <a href="#architecture">Architecture</a>
 </p>
 
 ---
@@ -23,9 +24,9 @@
 
 Every AI conversation starts the same way: *"here's a screenshot of..."*
 
-Madera was built for developers who live in AI-assisted workflows. One hotkey captures your screen, opens a full annotation editor, and copies the result to your clipboard -- ready to paste into Claude, ChatGPT, or any AI tool. No save dialogs. No file management. Just capture and paste.
+Madera was built for developers who live in AI-assisted workflows. One hotkey captures your screen, opens a full annotation editor, and copies the result to your clipboard -- ready to paste into Claude, ChatGPT, Cursor, or any AI tool. No save dialogs. No file management. Just capture and paste.
 
-But Madera goes further. It's a **clipboard powerhouse** with unified history, QuickPaste snippets, and a color picker -- all wrapped in 11 gorgeous themes and running at native speed thanks to Tauri 2 + Rust.
+But Madera goes further: **OCR text extraction**, **pinnable overlays**, **scroll capture**, a **token cost estimator**, **clipboard history with auto-paste**, and **prompt snippet management** -- all wrapped in 11 themes and running at native speed.
 
 **~6MB binary. Zero Electron. Pure performance.**
 
@@ -35,25 +36,37 @@ But Madera goes further. It's a **clipboard powerhouse** with unified history, Q
 
 - **Region selection** -- click and drag to capture any area of any monitor
 - **Full annotation suite** -- pen, highlighter, arrows, rectangles, circles, text, numbered markers, blur/pixelate
-- **Smart canvas sizing** -- image automatically fills the editor, adapts on resize
-- **One-click copy** -- `Ctrl+C` copies the annotated image to clipboard instantly
+- **Scroll capture** -- capture content that extends beyond the screen (multi-page, long logs)
 - **Multi-monitor support** -- works across all your displays
-- **Auto-resize for AI** -- optionally downscales to optimal resolution for AI vision models
+- **Smart canvas sizing** -- image automatically fills the editor, adapts on resize
+- **Export formats** -- PNG (lossless), JPEG (smallest), WebP (modern) -- choose per export
+
+### AI-Optimized
+
+Madera is purpose-built for AI vision workflows:
+
+- **Token cost estimator** -- real-time badge shows Claude vision token count and cost (`width * height / 750`)
+- **Auto-resize to 1568px** -- optimal resolution for Claude, no wasted tokens on oversized images
+- **OCR text extraction** -- extract text from any screenshot with one click (Tesseract.js, cross-platform, zero setup)
+- **Pin screenshot overlay** -- pin a screenshot as an always-on-top draggable overlay while you discuss it with an AI
+- **SSH upload** -- push screenshots to remote servers (multi-server support), path copied to clipboard for instant `@reference`
+- **Format selector** -- switch between PNG/JPEG/WebP to optimize file size before sharing
 
 ### Unified Clipboard History
 
 - **Everything in one place** -- screenshots, text clips, and color picks in a single searchable timeline
-- **Pin important items** -- keep frequently used clips at the top
-- **Background monitoring** -- silently tracks clipboard changes
+- **Background monitoring** -- adaptive polling (fast when active, slow when idle)
+- **Auto-paste** -- select any item and it pastes directly into the focused window
+- **Terminal-aware** -- auto-detects terminals and uses `Shift+Ctrl+V` instead of `Ctrl+V`
 - **SQLite-backed** -- fast search across thousands of entries
 
 ### QuickPaste Snippets
 
-- **Instant access** -- `Ctrl+Alt+V` opens the snippet board overlay
-- **Categories** -- organize snippets by project, language, or workflow
-- **Text & image snippets** -- paste code blocks, boilerplate, signatures, or image assets
+- **Instant access** -- `Ctrl+Alt+V` opens clipboard history, `Ctrl+Alt+Q` opens snippets
+- **Text & image snippets** -- paste code blocks, boilerplate, prompt templates, or image assets
 - **Auto-paste** -- selects a snippet and immediately types it into the active window
-- **Wayland-native paste** -- uses `wtype` for reliable input on modern Linux
+- **Smart positioning** -- panel anchors to the nearest screen edge, never between monitors
+- **Cross-platform paste** -- `ydotool` (kernel), `wtype` (Wayland), `xdotool` (X11) with automatic fallback
 
 ### Color Picker
 
@@ -61,7 +74,10 @@ But Madera goes further. It's a **clipboard powerhouse** with unified history, Q
 - **All formats** -- HEX (upper/lower), RGB, HSL
 - **Color history** -- every pick is saved and searchable
 
+### Responsive Editor Toolbar
 
+- **Wide window**: all actions visible -- Copy, Save, SSH, OCR, Pin, History
+- **Narrow window**: secondary actions collapse into a `...` overflow menu automatically
 
 ### 11 Themes
 
@@ -111,8 +127,12 @@ sudo cp src-tauri/target/release/madera-tools /usr/bin/madera-tools
 # Ubuntu/Pop!_OS/Debian
 sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
   libxdo-dev libx11-dev libxrandr-dev libxcomposite-dev libxdamage-dev \
-  wtype  # for Wayland paste support
+  slop xdotool ydotool wtype  # region selection + paste tools
 ```
+
+### Windows
+
+Build with `npm run tauri build`. The resulting `.msi` / `.exe` installer is in `src-tauri/target/release/bundle/`.
 
 ## Keyboard Shortcuts
 
@@ -121,22 +141,24 @@ sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
 | `Ctrl+Shift+S` | Capture screenshot |
 | `Ctrl+Shift+H` | Open history |
 | `Ctrl+Shift+X` | Color picker |
-| `Ctrl+Alt+V` | QuickPaste snippets |
+| `Ctrl+Alt+V` | QuickPaste (history tab) |
+| `Ctrl+Alt+Q` | QuickPaste (snippets tab) |
 | `Ctrl+C` | Copy annotated image (in editor) |
 | `Ctrl+S` | Save to file (in editor) |
 | `Ctrl+Z` / `Ctrl+Y` | Undo / Redo |
 | `V` `P` `H` `A` `R` `C` `T` `N` `B` | Tool shortcuts (in editor) |
 | `Escape` | Close current window |
 
-### COSMIC / Wayland Setup
+### Custom Desktop Shortcuts
 
-Global shortcuts don't work natively on Wayland. Set up COSMIC custom shortcuts to call the binary with flags:
+Global shortcuts use CLI flags. Set these up in your desktop environment's keyboard settings:
 
-```
-madera-tools --capture      # Screenshot
-madera-tools --history      # History panel
-madera-tools --colorpicker  # Color picker
-madera-tools --quickpaste   # QuickPaste overlay
+```bash
+madera-tools --capture        # Screenshot
+madera-tools --history        # History panel
+madera-tools --colorpicker    # Color picker
+madera-tools --quickpaste     # QuickPaste (history tab)
+madera-tools --snippets       # QuickPaste (snippets tab)
 ```
 
 ## Architecture
@@ -145,10 +167,11 @@ madera-tools --quickpaste   # QuickPaste overlay
 madera-screenshot-tool/
   src/                          # React frontend
     components/
-      Editor.tsx                # Fabric.js annotation canvas
+      Editor.tsx                # Fabric.js annotation canvas + AI tools
       Dashboard.tsx             # Main app screen
       History.tsx               # Unified clipboard history
-      QuickPasteModal.tsx       # Snippet selector overlay
+      QuickPasteModal.tsx       # Snippet/history selector overlay
+      PinView.tsx               # Pinned screenshot overlay
       SettingsModal.tsx         # App preferences + theme picker
       ColorPicker.tsx           # Pixel color sampler
     utils/
@@ -158,9 +181,9 @@ madera-screenshot-tool/
     lib.rs                      # Core: 50+ commands, windows, tray, shortcuts
     snippet_manager.rs          # Snippet CRUD (JSON storage)
     history.rs                  # SQLite history management
-    clipboard_monitor.rs        # Background clipboard watcher
-    native_selection.rs         # Platform-specific screen capture
-    wayland_focus.rs            # Wayland window focus utilities
+    clipboard_monitor.rs        # Background clipboard watcher (adaptive polling)
+    native_selection.rs         # Cross-platform screen capture (slop/slurp/Win32)
+    wayland_focus.rs            # Focus tracking (Wayland + X11 fallback)
     color_picker.rs             # Pixel sampling + magnifier
 ```
 
@@ -172,31 +195,19 @@ madera-screenshot-tool/
 | Backend | Rust |
 | Frontend | React 18 + TypeScript |
 | Canvas | Fabric.js 6 |
+| OCR | Tesseract.js |
 | Styling | Tailwind CSS |
 | Build | Vite 6 |
 | Database | SQLite (rusqlite) |
 | Icons | Lucide React |
 
-## CLI Usage
-
-Madera runs as a single-instance app. Subsequent calls dispatch to the running instance:
-
-```bash
-madera-tools                  # Open dashboard
-madera-tools --capture        # Trigger screenshot capture
-madera-tools --history        # Open history panel
-madera-tools --colorpicker    # Open color picker
-madera-tools --quickpaste     # Open QuickPaste overlay
-madera-tools --snippets       # Open snippet manager
-```
-
 ## Cross-Platform
 
 | Platform | Status |
 |----------|--------|
-| Linux (Wayland/COSMIC) | Full support (primary target) |
-| Linux (X11) | Full support |
-| Windows | Full support |
+| Linux (X11/GNOME) | Full support |
+| Linux (Wayland/COSMIC) | Full support (layer-shell overlays) |
+| Windows | Full support (Win32 native selection) |
 | macOS | Partial (no layer-shell overlays) |
 
 ## Contributing
