@@ -32,13 +32,13 @@ export default function Dashboard() {
       id: 'quick-paste',
       name: 'Quick Paste',
       icon: Clipboard,
-      action: () => invoke('open_quick_paste_panel'),
+      action: () => invoke('open_quick_paste_panel', { tab: 'history' }),
     },
     {
       id: 'prompt-snippets',
       name: 'Prompt Snippets',
       icon: Copy,
-      action: () => invoke('open_quick_paste_panel'),
+      action: () => invoke('open_quick_paste_panel', { tab: 'snippets' }),
     },
   ];
 

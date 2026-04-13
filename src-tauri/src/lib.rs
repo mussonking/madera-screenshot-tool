@@ -1153,8 +1153,8 @@ fn open_multi_paste_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Er
 }
 
 #[tauri::command]
-async fn open_quick_paste_panel(app: tauri::AppHandle) -> Result<(), String> {
-    open_quick_paste_window(&app)
+async fn open_quick_paste_panel(app: tauri::AppHandle, tab: Option<String>) -> Result<(), String> {
+    open_quick_paste_window(&app, tab.as_deref())
 }
 
 /// Toggle layer-shell anchor between left and right for a given window
@@ -1247,25 +1247,50 @@ async fn set_panel_keyboard(_app: AppHandle, _window_label: String, _enabled: bo
     Ok(())
 }
 
-fn open_quick_paste_window(app: &tauri::AppHandle) -> Result<(), String> {
+fn open_quick_paste_window(app: &tauri::AppHandle, tab: Option<&str>) -> Result<(), String> {
     // Snapshot the active window NOW, before the panel opens and COSMIC potentially
     // shifts focus to the window behind it. This snapshot is used by activate_last_focused().
     #[cfg(target_os = "linux")]
     wayland_focus::snapshot_for_paste();
+
+    #[cfg(target_os = "linux")]
+    if !is_wayland_session() {
+        if let Ok(output) = std::process::Command::new("xdotool")
+            .arg("getactivewindow")
+            .output()
+        {
+            if let Ok(id_str) = String::from_utf8(output.stdout) {
+                if let Ok(wid) = id_str.trim().parse::<u64>() {
+                    wayland_focus::set_x11_window_id(wid);
+                }
+            }
+        }
+    }
 
     if let Some(window) = app.get_webview_window("quickpaste") {
         window.close().map_err(|e| e.to_string())?;
     }
 
     let (cursor_x, _cursor_y, monitor_x, monitor_y, monitor_w, monitor_h) = get_cursor_and_monitor_info();
+    eprintln!("[quickpaste] cursor=({},{}) monitor=({},{} {}x{})", cursor_x, _cursor_y, monitor_x, monitor_y, monitor_w, monitor_h);
     let window_height = monitor_h as f64;
     let window_width = 400.0;
 
-    let mut pos_x = cursor_x as f64 - window_width / 2.0;
-    pos_x = pos_x.max(monitor_x as f64).min((monitor_x + monitor_w) as f64 - window_width);
+    // Position: right edge of the monitor the cursor is on
+    // If cursor is in the right half, anchor right; left half, anchor left
+    let monitor_center_x = monitor_x as f64 + monitor_w as f64 / 2.0;
+    let pos_x = if (cursor_x as f64) >= monitor_center_x {
+        (monitor_x + monitor_w) as f64 - window_width
+    } else {
+        monitor_x as f64
+    };
     let pos_y = monitor_y as f64;
 
-    let window = WebviewWindowBuilder::new(app, "quickpaste", WebviewUrl::App("index.html#quickpaste".into()))
+    // Pass tab selection via URL hash query
+    let tab_param = tab.unwrap_or("snippets");
+    let url = format!("index.html#quickpaste?tab={}", tab_param);
+
+    let window = WebviewWindowBuilder::new(app, "quickpaste", WebviewUrl::App(url.into()))
         .title("Quick Prompt Snippets")
         .inner_size(window_width, window_height)
         .position(pos_x, pos_y)
@@ -1765,7 +1790,7 @@ fn start_paste_hook(app: AppHandle) {
                                 .unwrap_or(true); // Assume open if can't lock (safer)
 
                             if !is_open {
-                                let _ = open_quick_paste_window(app);
+                                let _ = open_quick_paste_window(app, Some("history"));
                                 // Block the second V keypress so it doesn't paste
                                 return LRESULT(1);
                             }
@@ -2110,8 +2135,8 @@ pub fn run() {
                 Some("capture") => { let _ = open_selection_window(app); },
                 Some("history") => { let _ = open_history_window(app); },
                 Some("colorpicker") => { let _ = open_color_picker_window(app); },
-                Some("quickpaste") => { let _ = open_quick_paste_window(app); },
-                Some("snippets") => { let _ = open_quick_paste_window(app); },
+                Some("quickpaste") => { let _ = open_quick_paste_window(app, Some("history")); },
+                Some("snippets") => { let _ = open_quick_paste_window(app, Some("snippets")); },
                 _ => {
                     // No action flag: just focus existing window
                     if let Some(window) = app.get_webview_window("main") {
@@ -2244,7 +2269,7 @@ pub fn run() {
                         state.clipboard_monitor.update_settings(settings.clone());
                     }
                     "quick_paste" => {
-                        let _ = open_quick_paste_window(app);
+                        let _ = open_quick_paste_window(app, Some("history"));
                     }
                     _ => {}
                 })
@@ -2300,7 +2325,7 @@ pub fn run() {
 
             app.global_shortcut().on_shortcut(quickpaste_shortcut, move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
-                    let _ = open_quick_paste_window(&app_handle_quickpaste);
+                    let _ = open_quick_paste_window(&app_handle_quickpaste, Some("history"));
                 }
             })?;
 
@@ -2310,7 +2335,7 @@ pub fn run() {
 
             app.global_shortcut().on_shortcut(snippet_shortcut, move |_app, _shortcut, event| {
                 if event.state == ShortcutState::Pressed {
-                    let _ = open_quick_paste_window(&app_handle_snippet);
+                    let _ = open_quick_paste_window(&app_handle_snippet, Some("snippets"));
                 }
             })?;
 
@@ -2401,11 +2426,17 @@ pub fn run() {
                     std::thread::sleep(std::time::Duration::from_millis(500));
                     let _ = open_color_picker_window(&h);
                 });
-            } else if cli_args.iter().any(|a| a == "--quickpaste" || a == "--snippets") {
+            } else if cli_args.iter().any(|a| a == "--quickpaste") {
                 let h = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(500));
-                    let _ = open_quick_paste_window(&h);
+                    let _ = open_quick_paste_window(&h, Some("history"));
+                });
+            } else if cli_args.iter().any(|a| a == "--snippets") {
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    let _ = open_quick_paste_window(&h, Some("snippets"));
                 });
             }
 

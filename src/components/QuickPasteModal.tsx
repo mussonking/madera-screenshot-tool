@@ -201,7 +201,14 @@ const CategoryPicker = ({ title, categories, current, onSelect, onCancel }: {
 };
 
 const QuickPasteModal = () => {
-  const [activeTab, setActiveTab] = useState<TabType>("snippets");
+  // Read initial tab from URL hash query (e.g. #quickpaste?tab=history)
+  const initialTab = (() => {
+    const hash = window.location.hash;
+    const match = hash.match(/[?&]tab=(\w+)/);
+    if (match && (match[1] === "snippets" || match[1] === "history")) return match[1] as TabType;
+    return "snippets" as TabType;
+  })();
+  const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [snippets, setSnippets] = useState<SnippetItem[]>([]);
   const [historyItems, setHistoryItems] = useState<HistoryItem[]>([]);
   const [loading, setLoading] = useState(true);
