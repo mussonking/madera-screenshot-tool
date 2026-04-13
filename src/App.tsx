@@ -6,8 +6,9 @@ import History from "./components/History";
 import ColorPicker from "./components/ColorPicker";
 import SettingsPage from "./components/SettingsPage";
 import QuickPasteModal from "./components/QuickPasteModal";
+import PinView from "./components/PinView";
 
-type View = "dashboard" | "selection" | "editor" | "history" | "colorpicker" | "settings" | "quickpaste";
+type View = "dashboard" | "selection" | "editor" | "history" | "colorpicker" | "settings" | "quickpaste" | "pin";
 
 function App() {
   const [view, setView] = useState<View>("dashboard");
@@ -18,7 +19,9 @@ function App() {
       const path = window.location.pathname;
       const hash = window.location.hash;
 
-      if (hash.includes("multipaste") || path.includes("multipaste") || hash.includes("quickpaste") || path.includes("quickpaste")) {
+      if (hash.includes("pin") || path.includes("pin")) {
+        return "pin";
+      } else if (hash.includes("multipaste") || path.includes("multipaste") || hash.includes("quickpaste") || path.includes("quickpaste")) {
         return "quickpaste";
       } else if (hash.includes("settings") || path.includes("settings")) {
         return "settings";
@@ -56,6 +59,7 @@ function App() {
       {view === "colorpicker" && <ColorPicker />}
       {view === "quickpaste" && <QuickPasteModal />}
       {view === "settings" && <SettingsPage />}
+      {view === "pin" && <PinView />}
     </div>
   );
 }

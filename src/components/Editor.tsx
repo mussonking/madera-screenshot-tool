@@ -28,6 +28,10 @@ import {
   LayoutGrid,
   Upload,
   ChevronDown,
+  FileImage,
+  Pin,
+  ScanText,
+  MoreHorizontal,
 } from "lucide-react";
 
 type Tool =
@@ -83,6 +87,33 @@ export default function Editor() {
   const [showSshMenu, setShowSshMenu] = useState(false);
   const sshMenuRef = useRef<HTMLDivElement>(null);
   const [toast, setToast] = useState<Toast>({ message: '', type: 'info', visible: false });
+  const [exportFormat, setExportFormat] = useState<'png' | 'jpeg' | 'webp'>('png');
+  const [isOcrRunning, setIsOcrRunning] = useState(false);
+  const [isCompact, setIsCompact] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
+  const bottomBarRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDivElement>(null);
+  const [showFormatMenu, setShowFormatMenu] = useState(false);
+  const formatMenuRef = useRef<HTMLDivElement>(null);
+
+  // Token cost estimator for AI vision APIs
+  const tokenEstimate = (() => {
+    const w = imageSize.width;
+    const h = imageSize.height;
+    if (w === 0 || h === 0) return null;
+    // Claude auto-resizes if long edge > 1568px
+    let ew = w, eh = h;
+    const longEdge = Math.max(ew, eh);
+    if (longEdge > 1568) {
+      const scale = 1568 / longEdge;
+      ew = Math.round(ew * scale);
+      eh = Math.round(eh * scale);
+    }
+    const tokens = Math.ceil((ew * eh) / 750);
+    // Claude Sonnet 4.6 pricing: $3/M input tokens
+    const cost = (tokens / 1_000_000) * 3;
+    return { tokens, cost, resizedWidth: ew, resizedHeight: eh, wasResized: longEdge > 1568 };
+  })();
 
   const showNotification = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
     setToast({ message, type, visible: true });
@@ -115,6 +146,42 @@ export default function Editor() {
       })
       .catch(() => {});
   }, []);
+
+  // Track bottom bar width for responsive collapse
+  useEffect(() => {
+    if (!bottomBarRef.current) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setIsCompact(entry.contentRect.width < 700);
+      }
+    });
+    observer.observe(bottomBarRef.current);
+    return () => observer.disconnect();
+  }, []);
+
+  // Close more menu on outside click
+  useEffect(() => {
+    if (!showMoreMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(e.target as Node)) {
+        setShowMoreMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showMoreMenu]);
+
+  // Close format menu on outside click
+  useEffect(() => {
+    if (!showFormatMenu) return;
+    const handler = (e: MouseEvent) => {
+      if (formatMenuRef.current && !formatMenuRef.current.contains(e.target as Node)) {
+        setShowFormatMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showFormatMenu]);
 
   // Close SSH menu on outside click
   useEffect(() => {
@@ -716,23 +783,25 @@ export default function Editor() {
   };
 
   // Export functions
-  const getExportedImage = async (): Promise<string> => {
+  const getExportedImage = async (format?: 'png' | 'jpeg' | 'webp', quality?: number): Promise<string> => {
     const canvas = fabricRef.current;
     if (!canvas) {
       showNotification("Error: Canvas not found", "error");
       return "";
     }
 
+    const fmt = format || exportFormat;
+    const q = quality ?? (fmt === 'png' ? 1.0 : 0.85);
+
     try {
       // Deselect any active objects so selection borders don't get exported
       canvas.discardActiveObject();
       canvas.renderAll();
 
-      // Simplest possible export: exactly what is on the canvas right now
       const finalDataUrl = canvas.toDataURL({
-        format: "png",
+        format: fmt,
         multiplier: 1,
-        quality: 1.0
+        quality: q
       });
 
       if (!finalDataUrl || finalDataUrl.length < 100) {
@@ -741,11 +810,56 @@ export default function Editor() {
       }
 
       // Return base64 without the data URL prefix
-      return finalDataUrl.replace(/^data:image\/png;base64,/, "");
+      return finalDataUrl.replace(/^data:image\/[^;]+;base64,/, "");
     } catch (e) {
       console.error("Exception in getExportedImage:", e);
       showNotification(`Export exception: ${e}`, "error");
       return "";
+    }
+  };
+
+  const extractText = async () => {
+    try {
+      setIsOcrRunning(true);
+      showNotification("Extracting text...", "info");
+      const imageData = await getExportedImage('png');
+      if (!imageData) return;
+
+      const { createWorker } = await import('tesseract.js');
+      const worker = await createWorker('eng');
+      const { data: { text } } = await worker.recognize(`data:image/png;base64,${imageData}`);
+      await worker.terminate();
+
+      const trimmed = text.trim();
+      if (!trimmed) {
+        showNotification("No text found in image", "info");
+        return;
+      }
+
+      // Copy extracted text to clipboard
+      await invoke("copy_text_to_clipboard", { text: trimmed });
+      showNotification(`Text extracted and copied! (${trimmed.length} chars)`, "success");
+    } catch (err) {
+      console.error("OCR failed:", err);
+      showNotification(`OCR failed: ${err}`, "error");
+    } finally {
+      setIsOcrRunning(false);
+    }
+  };
+
+  const pinScreenshot = async () => {
+    try {
+      const imageData = await getExportedImage('png');
+      if (!imageData) return;
+      await invoke("pin_screenshot", {
+        imageData,
+        width: imageSize.width,
+        height: imageSize.height,
+      });
+      showNotification("Screenshot pinned!", "success");
+    } catch (err) {
+      console.error("Pin failed:", err);
+      showNotification(`Pin failed: ${err}`, "error");
     }
   };
 
@@ -762,7 +876,8 @@ export default function Editor() {
       console.log("Invoking copy_to_clipboard...");
       await invoke("copy_to_clipboard", { imageData });
       console.log("copy_to_clipboard success!");
-      showNotification(`Copied to clipboard! (Data len: ${Math.round(imageData.length / 1024)}KB)`, "success");
+      const sizeKB = Math.round(imageData.length * 0.75 / 1024);
+      showNotification(`Copied! ${exportFormat.toUpperCase()} ${sizeKB}KB`, "success");
 
       // Save to history
       console.log("Invoking save_to_history...");
@@ -787,10 +902,14 @@ export default function Editor() {
   const saveToFile = async () => {
     try {
       // Get default save path from backend (Pictures/sstool/)
-      const defaultPath = await invoke<string>("get_default_save_path");
+      let defaultPath = await invoke<string>("get_default_save_path");
+      // Replace .png extension with selected format
+      const ext = exportFormat === 'jpeg' ? 'jpg' : exportFormat;
+      defaultPath = defaultPath.replace(/\.png$/, `.${ext}`);
 
+      const filterName = exportFormat === 'png' ? 'PNG Image' : exportFormat === 'jpeg' ? 'JPEG Image' : 'WebP Image';
       const path = await save({
-        filters: [{ name: "PNG Image", extensions: ["png"] }],
+        filters: [{ name: filterName, extensions: [ext] }],
         defaultPath: defaultPath,
       });
 
@@ -1291,108 +1410,143 @@ export default function Editor() {
 
       {/* Bottom Action Bar */}
       <div
-        className="p-2 flex items-center justify-center gap-4"
+        ref={bottomBarRef}
+        className="p-2 flex items-center justify-between gap-2"
         style={{
           backgroundColor: theme.toolbar,
           borderTop: `2px ${theme.borderStyle} ${theme.toolbarBorder} `,
         }}
       >
-        <button
-          onClick={copyToClipboard}
-          style={{
-            backgroundColor: theme.accentColor,
-            borderRadius: theme.borderRadius,
-          }}
-          className="px-6 py-2 text-white hover:opacity-80 transition-colors flex items-center gap-2 font-medium"
-        >
-          <Copy size={18} />
-          Copy to Clipboard
-        </button>
-        <button
-          onClick={saveToFile}
-          style={{
-            backgroundColor: theme.buttonBg,
-            color: theme.textColor,
-            borderRadius: theme.borderRadius,
-            border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
-          }}
-          className="px-6 py-2 hover:opacity-80 transition-colors flex items-center gap-2"
-        >
-          <Save size={18} />
-          Save
-        </button>
-        {/* SSH Upload Button / Dropdown */}
-        {sshServers.length > 0 && (
-          <div className="relative" ref={sshMenuRef}>
-            {sshServers.length === 1 ? (
-              <button
-                onClick={() => uploadToCLI(sshServers[0].id)}
-                disabled={isUploading}
-                style={{ backgroundColor: "#10b981", borderRadius: theme.borderRadius, opacity: isUploading ? 0.5 : 1 }}
-                className="px-6 py-2 text-white hover:opacity-80 transition-colors flex items-center gap-2 font-medium"
-                title={`Upload to ${sshServers[0].name || sshServers[0].host}`}
-              >
-                <Upload size={18} />
-                {isUploading ? "Uploading..." : "SSH"}
-              </button>
-            ) : (
-              <>
-                <button
-                  onClick={() => setShowSshMenu(!showSshMenu)}
-                  disabled={isUploading}
-                  style={{ backgroundColor: "#10b981", borderRadius: theme.borderRadius, opacity: isUploading ? 0.5 : 1 }}
-                  className="px-4 py-2 text-white hover:opacity-80 transition-colors flex items-center gap-1.5 font-medium"
-                >
-                  <Upload size={18} />
-                  {isUploading ? "Uploading..." : "SSH"}
-                  <ChevronDown size={14} />
-                </button>
-                {showSshMenu && (
-                  <div
-                    className="absolute right-0 bottom-full mb-1 z-50 min-w-[160px] rounded-xl overflow-hidden shadow-xl border border-slate-600"
-                    style={{ backgroundColor: theme.toolbar }}
-                  >
-                    {sshServers.map((server) => (
-                      <button
-                        key={server.id}
-                        onClick={() => uploadToCLI(server.id)}
-                        className="w-full px-4 py-2.5 text-left text-sm hover:bg-emerald-600 transition-colors"
-                        style={{ color: theme.textColor }}
-                      >
-                        {server.name || server.host}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </>
+        {/* Left: Token info + format */}
+        <div className="flex items-center gap-0 min-w-0 shrink-0">
+          {tokenEstimate && (
+            <div
+              className="flex items-center gap-1.5 px-2 py-1.5 text-xs font-mono rounded-l-lg"
+              style={{ backgroundColor: theme.buttonBg, color: theme.textColor, borderTop: `1px solid ${theme.toolbarBorder}`, borderBottom: `1px solid ${theme.toolbarBorder}`, borderLeft: `1px solid ${theme.toolbarBorder}` }}
+              title={`${imageSize.width}x${imageSize.height}${tokenEstimate.wasResized ? ` -> ${tokenEstimate.resizedWidth}x${tokenEstimate.resizedHeight} (auto-resized)` : ''} | ${tokenEstimate.tokens.toLocaleString()} tokens | $${tokenEstimate.cost.toFixed(4)}`}
+            >
+              <FileImage size={12} style={{ color: '#f59e0b' }} />
+              {!isCompact && <span style={{ opacity: 0.6 }}>{imageSize.width}x{imageSize.height}</span>}
+              <span style={{ color: '#f59e0b' }}>~{tokenEstimate.tokens.toLocaleString()} tok</span>
+            </div>
+          )}
+          <div className="relative" ref={formatMenuRef}>
+            <button
+              onClick={() => setShowFormatMenu(!showFormatMenu)}
+              className="flex items-center gap-1 px-2 py-1.5 text-xs hover:opacity-80 transition-colors rounded-r-lg"
+              style={{ backgroundColor: theme.buttonBg, color: theme.textColor, border: `1px solid ${theme.toolbarBorder}` }}
+              title="Export format"
+            >
+              {exportFormat.toUpperCase()}
+              <ChevronDown size={10} />
+            </button>
+            {showFormatMenu && (
+              <div className="absolute left-0 bottom-full mb-1 z-50 rounded-lg overflow-hidden shadow-xl border" style={{ backgroundColor: theme.toolbar, borderColor: theme.toolbarBorder }}>
+                {(['png', 'jpeg', 'webp'] as const).map(fmt => (
+                  <button key={fmt} onClick={() => { setExportFormat(fmt); setShowFormatMenu(false); }}
+                    className="w-full px-4 py-2 text-left text-xs hover:opacity-80 transition-colors flex items-center justify-between gap-4"
+                    style={{ color: theme.textColor, backgroundColor: exportFormat === fmt ? theme.accentColor + '33' : 'transparent' }}>
+                    <span className="font-medium">{fmt.toUpperCase()}</span>
+                    <span style={{ opacity: 0.5 }}>{fmt === 'png' ? 'Lossless' : fmt === 'jpeg' ? 'Smallest' : 'Modern'}</span>
+                  </button>
+                ))}
+              </div>
             )}
           </div>
-        )}
-        <button
-          onClick={async () => {
-            await invoke("open_history_panel");
-          }}
-          style={{
-            backgroundColor: theme.buttonBg,
-            color: theme.textColor,
-            borderRadius: theme.borderRadius,
-            border: `1px ${theme.borderStyle} ${theme.toolbarBorder} `,
-          }}
-          className="px-6 py-2 hover:opacity-80 transition-colors flex items-center gap-2"
-        >
-          <LayoutGrid size={18} />
-          History
-        </button>
-        <button
-          onClick={closeWindow}
-          style={{
-            backgroundColor: "#4a4a4a",
-            borderRadius: theme.borderRadius,
-          }}
-          className="px-6 py-2 text-white hover:bg-gray-500 transition-colors flex items-center gap-2"
-        >
-          <X size={18} />
-          Cancel
+        </div>
+
+        {/* Center: Primary actions (always visible) */}
+        <div className="flex items-center gap-2">
+          <button onClick={copyToClipboard}
+            style={{ backgroundColor: theme.accentColor, borderRadius: theme.borderRadius }}
+            className="px-4 py-1.5 text-white hover:opacity-80 transition-colors flex items-center gap-1.5 font-medium text-sm">
+            <Copy size={16} /> Copy
+          </button>
+          <button onClick={saveToFile}
+            style={{ backgroundColor: theme.buttonBg, color: theme.textColor, borderRadius: theme.borderRadius, border: `1px ${theme.borderStyle} ${theme.toolbarBorder}` }}
+            className="px-4 py-1.5 hover:opacity-80 transition-colors flex items-center gap-1.5 text-sm">
+            <Save size={16} /> Save
+          </button>
+          {sshServers.length > 0 && (
+            <div className="relative" ref={sshMenuRef}>
+              <button
+                onClick={() => sshServers.length === 1 ? uploadToCLI(sshServers[0].id) : setShowSshMenu(!showSshMenu)}
+                disabled={isUploading}
+                style={{ backgroundColor: "#10b981", borderRadius: theme.borderRadius, opacity: isUploading ? 0.5 : 1 }}
+                className="px-4 py-1.5 text-white hover:opacity-80 transition-colors flex items-center gap-1.5 font-medium text-sm">
+                <Upload size={16} />
+                {isUploading ? "..." : "SSH"}
+                {sshServers.length > 1 && <ChevronDown size={12} />}
+              </button>
+              {showSshMenu && sshServers.length > 1 && (
+                <div className="absolute right-0 bottom-full mb-1 z-50 min-w-[160px] rounded-xl overflow-hidden shadow-xl border border-slate-600" style={{ backgroundColor: theme.toolbar }}>
+                  {sshServers.map((server) => (
+                    <button key={server.id} onClick={() => uploadToCLI(server.id)}
+                      className="w-full px-4 py-2.5 text-left text-sm hover:bg-emerald-600 transition-colors" style={{ color: theme.textColor }}>
+                      {server.name || server.host}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Secondary actions: shown inline when wide, in overflow menu when compact */}
+          {!isCompact ? (
+            <>
+              <button onClick={extractText} disabled={isOcrRunning}
+                style={{ backgroundColor: '#6366f1', borderRadius: theme.borderRadius, opacity: isOcrRunning ? 0.5 : 1 }}
+                className="px-3 py-1.5 text-white hover:opacity-80 transition-colors flex items-center gap-1.5 text-xs font-medium"
+                title="Extract text (OCR)">
+                <ScanText size={14} /> {isOcrRunning ? "..." : "OCR"}
+              </button>
+              <button onClick={pinScreenshot}
+                style={{ backgroundColor: '#8b5cf6', borderRadius: theme.borderRadius }}
+                className="px-3 py-1.5 text-white hover:opacity-80 transition-colors flex items-center gap-1.5 text-xs font-medium"
+                title="Pin as overlay">
+                <Pin size={14} /> Pin
+              </button>
+              <button onClick={() => invoke("open_history_panel")}
+                style={{ backgroundColor: theme.buttonBg, color: theme.textColor, borderRadius: theme.borderRadius, border: `1px solid ${theme.toolbarBorder}` }}
+                className="px-3 py-1.5 hover:opacity-80 transition-colors flex items-center gap-1.5 text-xs">
+                <LayoutGrid size={14} /> History
+              </button>
+            </>
+          ) : (
+            <div className="relative" ref={moreMenuRef}>
+              <button onClick={() => setShowMoreMenu(!showMoreMenu)}
+                style={{ backgroundColor: theme.buttonBg, color: theme.textColor, borderRadius: theme.borderRadius, border: `1px solid ${theme.toolbarBorder}` }}
+                className="px-2 py-1.5 hover:opacity-80 transition-colors flex items-center text-xs">
+                <MoreHorizontal size={16} />
+              </button>
+              {showMoreMenu && (
+                <div className="absolute right-0 bottom-full mb-1 z-50 min-w-[160px] rounded-lg overflow-hidden shadow-xl border" style={{ backgroundColor: theme.toolbar, borderColor: theme.toolbarBorder }}>
+                  <button onClick={() => { extractText(); setShowMoreMenu(false); }} disabled={isOcrRunning}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:opacity-80 transition-colors flex items-center gap-2"
+                    style={{ color: theme.textColor, opacity: isOcrRunning ? 0.5 : 1 }}>
+                    <ScanText size={14} style={{ color: '#6366f1' }} /> {isOcrRunning ? "Extracting..." : "Extract Text (OCR)"}
+                  </button>
+                  <button onClick={() => { pinScreenshot(); setShowMoreMenu(false); }}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:opacity-80 transition-colors flex items-center gap-2"
+                    style={{ color: theme.textColor }}>
+                    <Pin size={14} style={{ color: '#8b5cf6' }} /> Pin Screenshot
+                  </button>
+                  <button onClick={() => { invoke("open_history_panel"); setShowMoreMenu(false); }}
+                    className="w-full px-4 py-2.5 text-left text-sm hover:opacity-80 transition-colors flex items-center gap-2"
+                    style={{ color: theme.textColor }}>
+                    <LayoutGrid size={14} /> History
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Close button (always visible) */}
+        <button onClick={closeWindow}
+          style={{ backgroundColor: "#4a4a4a", borderRadius: theme.borderRadius }}
+          className="px-2 py-1.5 text-white hover:bg-gray-500 transition-colors flex items-center shrink-0">
+          <X size={16} />
         </button>
       </div>
       {/* Toast Notification */}

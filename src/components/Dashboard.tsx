@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Camera, Palette, Settings, Copy, Clipboard, LayoutDashboard } from 'lucide-react';
+import { Camera, Palette, Settings, Copy, Clipboard, LayoutDashboard, ScrollText } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import History from './History';
 import SettingsModal from './SettingsModal';
@@ -21,6 +21,12 @@ export default function Dashboard() {
       name: 'Capture',
       icon: Camera,
       action: () => invoke('trigger_capture'),
+    },
+    {
+      id: 'scroll-capture',
+      name: 'Scroll Capture',
+      icon: ScrollText,
+      action: () => invoke('capture_scrolling', { scrollCount: 5, scrollDelayMs: 400 }),
     },
     {
       id: 'color-picker',

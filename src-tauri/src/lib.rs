@@ -1053,10 +1053,140 @@ async fn open_editor_with_image(
 }
 
 #[tauri::command]
+async fn pin_screenshot(app: AppHandle, image_data: String, width: u32, height: u32) -> Result<(), String> {
+    let pin_id = format!("pin-{}", std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis());
+
+    // Store the image for the pin window to retrieve
+    let state = app.state::<AppState>();
+    {
+        let mut pending = state.pending_capture.lock().unwrap();
+        *pending = Some(PendingCapture {
+            image_data,
+            width,
+            height,
+            monitor_name: "pin".to_string(),
+        });
+    }
+
+    // Scale down for the pin window (max 600px wide, maintain aspect ratio)
+    let scale = if width > 600 { 600.0 / width as f64 } else { 1.0 };
+    let win_w = (width as f64 * scale).round();
+    let win_h = (height as f64 * scale).round();
+
+    // Position near cursor
+    let (cursor_x, cursor_y, _, _, _, _) = get_cursor_and_monitor_info();
+
+    let window = WebviewWindowBuilder::new(&app, &pin_id, WebviewUrl::App("index.html#pin".into()))
+        .title("Pin")
+        .inner_size(win_w, win_h)
+        .position(cursor_x as f64 + 20.0, cursor_y as f64 + 20.0)
+        .resizable(true)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .transparent(true)
+        .build().map_err(|e| e.to_string())?;
+
+    window.show().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
 async fn close_window(app: AppHandle, label: String) -> Result<(), String> {
     if let Some(window) = app.get_webview_window(&label) {
         window.close().map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+#[tauri::command]
+async fn capture_scrolling(app: AppHandle, scroll_count: u32, scroll_delay_ms: u64) -> Result<(), String> {
+    let app_handle = app.clone();
+    std::thread::spawn(move || {
+        use std::process::Command;
+        use xcap::Monitor;
+
+        let scroll_steps = scroll_count.max(2).min(20);
+        let delay = std::time::Duration::from_millis(scroll_delay_ms.max(200).min(2000));
+        let mut images: Vec<image::DynamicImage> = Vec::new();
+
+        // Get the active window geometry for cropping
+        let win_geom = Command::new("xdotool")
+            .args(["getactivewindow", "getwindowgeometry", "--shell"])
+            .output()
+            .ok()
+            .and_then(|o| if o.status.success() { Some(String::from_utf8_lossy(&o.stdout).to_string()) } else { None });
+
+        let (win_x, win_y, win_w, win_h) = if let Some(geom) = win_geom {
+            let parse = |key: &str| -> i32 {
+                geom.lines()
+                    .find(|l| l.starts_with(key))
+                    .and_then(|l| l.split('=').nth(1))
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(0)
+            };
+            (parse("X"), parse("Y"), parse("WIDTH"), parse("HEIGHT"))
+        } else {
+            (0, 0, 0, 0)
+        };
+
+        for i in 0..scroll_steps {
+            // Capture the screen
+            if let Ok(monitors) = Monitor::all() {
+                if let Some(mon) = monitors.iter().find(|m| m.is_primary()).or(monitors.first()) {
+                    if let Ok(screen) = mon.capture_image() {
+                        let img = image::DynamicImage::ImageRgba8(screen);
+                        // Crop to window if we have geometry
+                        let cropped = if win_w > 0 && win_h > 0 {
+                            let cx = (win_x - mon.x()).max(0) as u32;
+                            let cy = (win_y - mon.y()).max(0) as u32;
+                            img.crop_imm(cx, cy, win_w as u32, win_h as u32)
+                        } else {
+                            img
+                        };
+                        images.push(cropped);
+                    }
+                }
+            }
+
+            if i < scroll_steps - 1 {
+                // Scroll down
+                let _ = Command::new("xdotool")
+                    .args(["key", "Page_Down"])
+                    .output();
+                std::thread::sleep(delay);
+            }
+        }
+
+        if images.is_empty() {
+            eprintln!("[scrolling_capture] No images captured");
+            return;
+        }
+
+        // Stitch images vertically (simple: stack them, overlap detection is complex)
+        let total_width = images.iter().map(|i| i.width()).max().unwrap_or(0);
+        let total_height: u32 = images.iter().map(|i| i.height()).sum();
+
+        let mut stitched = image::RgbaImage::new(total_width, total_height);
+        let mut y_offset = 0u32;
+        for img in &images {
+            image::imageops::overlay(&mut stitched, &img.to_rgba8(), 0, y_offset as i64);
+            y_offset += img.height();
+        }
+
+        let dynamic = image::DynamicImage::ImageRgba8(stitched);
+        let mut buffer = std::io::Cursor::new(Vec::new());
+        if dynamic.write_to(&mut buffer, image::ImageFormat::Png).is_err() {
+            return;
+        }
+
+        use base64::Engine;
+        let base64_data = base64::engine::general_purpose::STANDARD.encode(buffer.get_ref());
+        let _ = open_editor_window(&app_handle, &base64_data, total_width, total_height);
+    });
     Ok(())
 }
 
@@ -2456,8 +2586,10 @@ pub fn run() {
             update_settings,
             get_pending_capture,
             open_editor_with_image,
+            pin_screenshot,
             close_window,
             trigger_capture,
+            capture_scrolling,
             save_image_to_file,
             resize_image,
             get_default_save_path,
