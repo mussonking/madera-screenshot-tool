@@ -28,11 +28,20 @@ use tauri::{
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
+/// Check if the current session is Wayland (vs X11)
+#[cfg(target_os = "linux")]
+fn is_wayland_session() -> bool {
+    std::env::var("XDG_SESSION_TYPE").map(|v| v == "wayland").unwrap_or(false)
+}
+
 /// Apply wlr-layer-shell overlay to a Tauri window (Wayland always-on-top).
 /// Must be called BEFORE the GTK window is realized (i.e. before .show()).
 /// Runs on the main thread as required by GTK.
 #[cfg(target_os = "linux")]
 fn apply_layer_shell_overlay(window: &tauri::WebviewWindow, width: i32) {
+    if !is_wayland_session() {
+        return; // Layer-shell is Wayland-only; on X11 use normal window behavior
+    }
     let window_clone = window.clone();
     let _ = window.run_on_main_thread(move || {
         if let Ok(gtk_win) = window_clone.gtk_window() {
@@ -767,13 +776,16 @@ async fn update_color_settings(
 }
 
 fn open_selection_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    eprintln!("[lib] open_selection_window called");
     // Use native Win32 selection - no WebView, no flash!
     // The native selection captures ALL monitors and returns the cropped image directly
     let app_handle = app.clone();
 
     std::thread::spawn(move || {
+        eprintln!("[lib] open_selection_window thread started");
         // Show native selection overlay - it captures all screens internally
         if let Some(selection) = native_selection::show_native_selection() {
+            eprintln!("[lib] native_selection returned Some, opening editor");
             // The selection result now includes the cropped image data
             if let Some(image_data) = selection.image_data {
                 // Open editor with the cropped image from native selection
@@ -784,6 +796,8 @@ fn open_selection_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
                     selection.height,
                 );
             }
+        } else {
+            eprintln!("[lib] native_selection returned None");
         }
     });
 
@@ -1072,6 +1086,23 @@ fn open_multi_paste_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Er
         }
     }
 
+    #[cfg(target_os = "linux")]
+    {
+        wayland_focus::snapshot_for_paste();
+        if !is_wayland_session() {
+            if let Ok(output) = std::process::Command::new("xdotool")
+                .arg("getactivewindow")
+                .output()
+            {
+                if let Ok(id_str) = String::from_utf8(output.stdout) {
+                    if let Ok(wid) = id_str.trim().parse::<u64>() {
+                        wayland_focus::set_x11_window_id(wid);
+                    }
+                }
+            }
+        }
+    }
+
     // Close existing if any
     if let Some(window) = app.get_webview_window("multipaste") {
         window.close()?;
@@ -1130,6 +1161,9 @@ async fn open_quick_paste_panel(app: tauri::AppHandle) -> Result<(), String> {
 #[cfg(target_os = "linux")]
 #[tauri::command]
 async fn toggle_panel_side(app: AppHandle, window_label: String) -> Result<String, String> {
+    if !is_wayland_session() {
+        return Ok("right".to_string()); // Layer-shell not available on X11
+    }
     let window = app.get_webview_window(&window_label)
         .ok_or("Window not found")?;
     let win = window.clone();
@@ -1152,6 +1186,9 @@ async fn toggle_panel_side(app: AppHandle, window_label: String) -> Result<Strin
 #[cfg(target_os = "linux")]
 #[tauri::command]
 async fn toggle_panel_monitor(app: AppHandle, window_label: String) -> Result<(), String> {
+    if !is_wayland_session() {
+        return Ok(()); // Layer-shell not available on X11
+    }
     let window = app.get_webview_window(&window_label)
         .ok_or("Window not found")?;
     let win = window.clone();
@@ -1187,6 +1224,9 @@ async fn toggle_panel_monitor(app: AppHandle, window_label: String) -> Result<()
 #[cfg(target_os = "linux")]
 #[tauri::command]
 async fn set_panel_keyboard(app: AppHandle, window_label: String, enabled: bool) -> Result<(), String> {
+    if !is_wayland_session() {
+        return Ok(()); // On X11 the window has normal keyboard focus
+    }
     let window = app.get_webview_window(&window_label)
         .ok_or("Window not found")?;
     let win = window.clone();
@@ -1361,13 +1401,28 @@ async fn paste_snippet_item(app: AppHandle, item_id: String) -> Result<(), Strin
 
         #[cfg(not(windows))]
         {
-            // Re-activate the last focused non-Madera window (Linux equivalent of
-            // SetForegroundWindow). Without this, COSMIC shifts focus to the window
-            // directly behind the layer-shell panel on click.
+            // On X11, close the paste panel first so it doesn't steal focus back
+            #[cfg(target_os = "linux")]
+            if !is_wayland_session() {
+                for label in &["quickpaste", "multipaste"] {
+                    if let Some(w) = app_clone.get_webview_window(label) {
+                        let _ = w.hide();
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
             wayland_focus::activate_last_focused();
             std::thread::sleep(std::time::Duration::from_millis(350));
-            // Text is already in clipboard — Ctrl+V preserves Unicode (é, à, etc.)
             simulate_paste();
+            // On X11, close the panel after paste completes
+            #[cfg(target_os = "linux")]
+            if !is_wayland_session() {
+                for label in &["quickpaste", "multipaste"] {
+                    if let Some(w) = app_clone.get_webview_window(label) {
+                        let _ = w.close();
+                    }
+                }
+            }
         }
     });
 
@@ -1546,6 +1601,7 @@ async fn paste_history_item(app: AppHandle, item_id: String) -> Result<(), Strin
     } else {
         String::new()
     };
+    let app_clone = app.clone();
     std::thread::spawn(move || {
         #[cfg(windows)]
         {
@@ -1566,10 +1622,28 @@ async fn paste_history_item(app: AppHandle, item_id: String) -> Result<(), Strin
 
         #[cfg(not(windows))]
         {
+            // On X11, hide the paste panel first so it doesn't steal focus back
+            #[cfg(target_os = "linux")]
+            if !is_wayland_session() {
+                for label in &["quickpaste", "multipaste"] {
+                    if let Some(w) = app_clone.get_webview_window(label) {
+                        let _ = w.hide();
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
             wayland_focus::activate_last_focused();
             std::thread::sleep(std::time::Duration::from_millis(350));
-            // Text is already in clipboard — Ctrl+V preserves Unicode (é, à, etc.)
             simulate_paste();
+            // On X11, close the panel after paste completes
+            #[cfg(target_os = "linux")]
+            if !is_wayland_session() {
+                for label in &["quickpaste", "multipaste"] {
+                    if let Some(w) = app_clone.get_webview_window(label) {
+                        let _ = w.close();
+                    }
+                }
+            }
         }
     });
 
@@ -1843,22 +1917,69 @@ fn simulate_paste() {
 }
 
 #[cfg(not(windows))]
+fn is_active_window_terminal() -> bool {
+    // On X11, check WM_CLASS of the focused window to detect terminals
+    let window_id = std::process::Command::new("xdotool")
+        .arg("getactivewindow")
+        .output()
+        .ok();
+    let window_id = match window_id {
+        Some(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => return false,
+    };
+    let xprop = std::process::Command::new("xprop")
+        .args(["-id", &window_id, "WM_CLASS"])
+        .output()
+        .ok();
+    let class = match xprop {
+        Some(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).to_lowercase(),
+        _ => return false,
+    };
+    const TERMINALS: &[&str] = &[
+        "wezterm", "gnome-terminal", "kitty", "alacritty", "xterm",
+        "konsole", "tilix", "terminator", "xfce4-terminal", "sakura",
+        "st-256color", "urxvt", "foot", "blackbox",
+    ];
+    TERMINALS.iter().any(|t| class.contains(t))
+}
+
+#[cfg(not(windows))]
 fn simulate_paste() {
+    // Detect terminal to use Shift+Ctrl+V instead of Ctrl+V
+    let use_terminal_paste = is_active_window_terminal();
+    if use_terminal_paste {
+        eprintln!("[paste] Terminal detected, using Shift+Ctrl+V");
+    }
+
+    let key = if use_terminal_paste { "shift+ctrl+v" } else { "ctrl+v" };
+
     // ydotool injects via kernel uinput — bypasses Wayland focus entirely.
     // Falls back to wtype (Wayland protocol) then xdotool (X11).
     let ok = std::process::Command::new("ydotool")
-        .args(["key", "--delay", "0", "ctrl+v"])
+        .args(["key", "--delay", "0", key])
         .spawn()
         .is_ok();
     if !ok {
-        let ok2 = std::process::Command::new("wtype")
-            .args(["-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"])
-            .spawn()
-            .is_ok();
-        if !ok2 {
-            let _ = std::process::Command::new("xdotool")
-                .args(["key", "ctrl+v"])
-                .spawn();
+        if use_terminal_paste {
+            let ok2 = std::process::Command::new("wtype")
+                .args(["-M", "shift", "-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl", "-m", "shift"])
+                .spawn()
+                .is_ok();
+            if !ok2 {
+                let _ = std::process::Command::new("xdotool")
+                    .args(["key", "shift+ctrl+v"])
+                    .spawn();
+            }
+        } else {
+            let ok2 = std::process::Command::new("wtype")
+                .args(["-M", "ctrl", "-P", "v", "-p", "v", "-m", "ctrl"])
+                .spawn()
+                .is_ok();
+            if !ok2 {
+                let _ = std::process::Command::new("xdotool")
+                    .args(["key", "ctrl+v"])
+                    .spawn();
+            }
         }
     }
 }

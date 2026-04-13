@@ -38,6 +38,13 @@ pub struct SharedFocus {
 }
 
 static FOCUS: OnceLock<Arc<Mutex<SharedFocus>>> = OnceLock::new();
+static X11_WINDOW_ID: OnceLock<std::sync::atomic::AtomicU64> = OnceLock::new();
+
+/// Set the X11 window ID to restore focus to (called from lib.rs)
+pub fn set_x11_window_id(window_id: u64) {
+    let atomic = X11_WINDOW_ID.get_or_init(|| std::sync::atomic::AtomicU64::new(0));
+    atomic.store(window_id, std::sync::atomic::Ordering::Relaxed);
+}
 
 pub fn init() {
     let shared = Arc::new(Mutex::new(SharedFocus {
@@ -67,26 +74,68 @@ pub fn snapshot_for_paste() {
 /// Activate the snapshotted window (captured when the panel opened).
 /// Returns true if a window was activated.
 pub fn activate_last_focused() -> bool {
-    let focus = match FOCUS.get() {
-        Some(f) => f,
-        None => return false,
-    };
-    let guard = match focus.lock() {
-        Ok(g) => g,
-        Err(_) => return false,
-    };
-    // Use snapshot — the window that was active BEFORE the panel opened
-    let handle = guard.snapshot.as_ref().or(guard.handle.as_ref());
-    eprintln!("[focus_tracker] activate_last_focused: snapshot={} manager={} seat={}",
-        guard.snapshot.is_some(), guard.manager.is_some(), guard.seat.is_some());
-    match (handle, &guard.manager, &guard.seat) {
-        (Some(_handle), Some(manager), Some(seat)) => {
-            manager.activate(_handle, seat);
-            eprintln!("[focus_tracker] activate sent!");
+    // Try Wayland/Cosmic first
+    let focus = FOCUS.get();
+    if let Some(f) = focus {
+        if let Ok(guard) = f.lock() {
+            let handle = guard.snapshot.as_ref().or(guard.handle.as_ref());
+            eprintln!("[focus_tracker] activate_last_focused: snapshot={} manager={} seat={}",
+                guard.snapshot.is_some(), guard.manager.is_some(), guard.seat.is_some());
+            match (handle, &guard.manager, &guard.seat) {
+                (Some(_handle), Some(manager), Some(seat)) => {
+                    manager.activate(_handle, seat);
+                    eprintln!("[focus_tracker] activate sent!");
+                    return true;
+                }
+                _ => {
+                    eprintln!("[focus_tracker] activate SKIPPED - missing handle/manager/seat");
+                }
+            }
+        }
+    }
+
+    // Fallback to X11 if Wayland/Cosmic not available
+    activate_last_focused_x11()
+}
+
+/// X11 fallback: Use xdotool to activate the stored window
+fn activate_last_focused_x11() -> bool {
+    use std::process::Command;
+
+    // Check if we're on X11
+    let session_type = std::env::var("XDG_SESSION_TYPE").unwrap_or_default();
+    if session_type != "x11" {
+        eprintln!("[focus_tracker] X11 fallback skipped - not on X11 session");
+        return false;
+    }
+
+    eprintln!("[focus_tracker] Using X11 fallback with xdotool");
+
+    // Get the stored window ID from the shared atomic
+    let window_id = X11_WINDOW_ID
+        .get()
+        .map(|a| a.load(std::sync::atomic::Ordering::Relaxed))
+        .unwrap_or(0);
+
+    if window_id == 0 {
+        eprintln!("[focus_tracker] X11 fallback: no window ID stored");
+        return false;
+    }
+
+    match Command::new("xdotool")
+        .args(["windowactivate", &window_id.to_string()])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            eprintln!("[focus_tracker] X11 fallback: activated window {}", window_id);
             true
         }
-        _ => {
-            eprintln!("[focus_tracker] activate SKIPPED - missing handle/manager/seat");
+        Ok(output) => {
+            eprintln!("[focus_tracker] X11 fallback: xdotool failed: {}", String::from_utf8_lossy(&output.stderr));
+            false
+        }
+        Err(e) => {
+            eprintln!("[focus_tracker] X11 fallback: xdotool error: {}", e);
             false
         }
     }

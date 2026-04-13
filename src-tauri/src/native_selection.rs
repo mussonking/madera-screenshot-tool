@@ -514,29 +514,131 @@ unsafe extern "system" fn window_proc(
 }
 
 #[cfg(not(windows))]
-pub fn show_native_selection() -> Option<SelectionResult> {
-    // Strategy: use slurp (Wayland) or xdotool (X11) for region selection,
-    // then xcap to capture the screen and crop to the selected region.
-    // This avoids depending on grim which may not have screen capture permissions.
+fn is_wayland() -> bool {
+    std::env::var("XDG_SESSION_TYPE")
+        .map(|s| s == "wayland")
+        .unwrap_or(false)
+}
 
-    // Try slurp for interactive selection
-    // Returns None if user cancelled (ESC) or slurp is not installed
-    let slurp_available = std::process::Command::new("which")
-        .arg("slurp")
+#[cfg(not(windows))]
+pub fn show_native_selection() -> Option<SelectionResult> {
+    eprintln!("[native_selection] Starting screenshot capture");
+    eprintln!("[native_selection] Session type: XDG_SESSION_TYPE={:?}", std::env::var("XDG_SESSION_TYPE").ok());
+
+    if is_wayland() {
+        // Wayland: use slurp for interactive region selection + xcap for capture
+        let slurp_available = std::process::Command::new("which")
+            .arg("slurp")
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if slurp_available {
+            return try_slurp_xcap();
+        }
+    } else {
+        // X11: use slop for interactive region selection + scrot or xcap for capture
+        if let Some(result) = try_slop_x11() {
+            return Some(result);
+        }
+    }
+
+    // Fallback: full screen capture
+    try_xcap_fullscreen()
+}
+
+/// X11: use slop for interactive region selection, then xcap + crop for capture
+#[cfg(not(windows))]
+fn try_slop_x11() -> Option<SelectionResult> {
+    use std::process::Command;
+    use xcap::Monitor;
+
+    let slop_available = Command::new("which")
+        .arg("slop")
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
 
-    if slurp_available {
-        // slurp is available — use it. If user cancels, return None (don't fallback)
-        return try_slurp_xcap();
+    if !slop_available {
+        eprintln!("[native_selection] slop not installed, falling back to fullscreen");
+        return None;
     }
 
-    // Fallback: full screen capture (only if slurp is not installed)
-    try_xcap_fullscreen()
+    // slop lets user draw a selection rectangle on X11, returns geometry
+    let slop_output = Command::new("slop")
+        .args(["-f", "%x %y %w %h"])
+        .output()
+        .ok()?;
+
+    if !slop_output.status.success() {
+        eprintln!("[native_selection] slop cancelled or failed");
+        return None; // User cancelled (ESC)
+    }
+
+    let output_str = String::from_utf8_lossy(&slop_output.stdout).trim().to_string();
+    eprintln!("[native_selection] slop output: {}", output_str);
+    let vals: Vec<i32> = output_str.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+    if vals.len() != 4 {
+        eprintln!("[native_selection] slop returned unexpected format");
+        return None;
+    }
+    let (sel_x, sel_y, sel_w, sel_h) = (vals[0], vals[1], vals[2], vals[3]);
+
+    if sel_w <= 0 || sel_h <= 0 {
+        return None;
+    }
+
+    // Capture the monitor that contains the selection using xcap
+    let monitors = Monitor::all().ok()?;
+
+    let center_x = sel_x + sel_w / 2;
+    let center_y = sel_y + sel_h / 2;
+
+    let target_monitor = monitors.iter().find(|m| {
+        let mx = m.x();
+        let my = m.y();
+        let mw = m.width() as i32;
+        let mh = m.height() as i32;
+        center_x >= mx && center_x < mx + mw && center_y >= my && center_y < my + mh
+    }).or_else(|| monitors.iter().find(|m| m.is_primary()))
+      .or(monitors.first())?;
+
+    let mon_x = target_monitor.x();
+    let mon_y = target_monitor.y();
+
+    let screen_image = target_monitor.capture_image().ok()?;
+
+    // Crop to selection (coordinates relative to monitor)
+    let crop_x = (sel_x - mon_x).max(0) as u32;
+    let crop_y = (sel_y - mon_y).max(0) as u32;
+    let crop_w = (sel_w as u32).min(screen_image.width().saturating_sub(crop_x));
+    let crop_h = (sel_h as u32).min(screen_image.height().saturating_sub(crop_y));
+
+    if crop_w == 0 || crop_h == 0 {
+        return None;
+    }
+
+    let dynamic_image = image::DynamicImage::ImageRgba8(screen_image);
+    let cropped = dynamic_image.crop_imm(crop_x, crop_y, crop_w, crop_h);
+
+    let mut buffer = std::io::Cursor::new(Vec::new());
+    cropped.write_to(&mut buffer, image::ImageFormat::Png).ok()?;
+
+    let base64_data = base64::engine::general_purpose::STANDARD.encode(buffer.get_ref());
+
+    eprintln!("[native_selection] X11 capture OK: {}x{}", crop_w, crop_h);
+
+    Some(SelectionResult {
+        x: sel_x,
+        y: sel_y,
+        width: crop_w,
+        height: crop_h,
+        cancelled: false,
+        image_data: Some(base64_data),
+    })
 }
 
-/// Use slurp for interactive region selection, then xcap + crop for the actual capture
+/// Wayland: use slurp for interactive region selection, then xcap + crop for the actual capture
 #[cfg(not(windows))]
 fn try_slurp_xcap() -> Option<SelectionResult> {
     use std::process::Command;
