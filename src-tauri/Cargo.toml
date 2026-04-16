@@ -1,8 +1,10 @@
 [package]
 name = "madera-tools"
 version = "1.0.0"
-description = "Madera.Tools"
-authors = ["you"]
+description = "The screenshot tool built for the AI era"
+authors = ["Marc-Antoine Du Moulin"]
+license = "MIT"
+repository = "https://github.com/mussonking/madera-screenshot-tool"
 edition = "2021"
 
 [lib]

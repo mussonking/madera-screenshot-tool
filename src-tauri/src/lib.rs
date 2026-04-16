@@ -2349,7 +2349,8 @@ pub fn run() {
             let clipboard_monitor = CheckMenuItem::with_id(app, "clipboard_monitor", "Clipboard Monitoring", true, true, None::<&str>)?;
             let autostart_label = if cfg!(windows) { "Start with Windows" } else { "Start at Login" };
             let autostart = CheckMenuItem::with_id(app, "autostart", autostart_label, true, autostart_enabled, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&capture, &colorpicker, &history, &quick_paste, &settings_panel, &clipboard_monitor, &autostart, &quit])?;
+            let dashboard = MenuItem::with_id(app, "dashboard", "Dashboard", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&dashboard, &capture, &colorpicker, &history, &quick_paste, &settings_panel, &clipboard_monitor, &autostart, &quit])?;
 
             // Load icon
             let icon = Image::from_bytes(include_bytes!("../icons/icon.png"))
@@ -2368,6 +2369,9 @@ pub fn run() {
                             *should_exit = true;
                         }
                         app.exit(0);
+                    }
+                    "dashboard" => {
+                        let _ = open_main_window(app);
                     }
                     "capture" => {
                         let _ = open_selection_window(app);

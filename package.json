@@ -2,6 +2,13 @@
   "name": "madera-tools",
   "private": true,
   "version": "1.0.0",
+  "description": "The screenshot tool built for the AI era",
+  "author": "Marc-Antoine Du Moulin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mussonking/madera-screenshot-tool.git"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

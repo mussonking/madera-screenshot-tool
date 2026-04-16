@@ -1,4 +1,10 @@
 <p align="center">
+  <img src="docs/logo.png" alt="Madera.Tools Logo" width="128" />
+</p>
+
+<h1 align="center">Madera.Tools</h1>
+
+<p align="center">
   <img src="https://img.shields.io/badge/Built_with-Tauri_2-FFC131?style=for-the-badge&logo=tauri&logoColor=white" alt="Tauri 2" />
   <img src="https://img.shields.io/badge/Frontend-React_18-61DAFB?style=for-the-badge&logo=react&logoColor=white" alt="React" />
   <img src="https://img.shields.io/badge/Backend-Rust-DEA584?style=for-the-badge&logo=rust&logoColor=white" alt="Rust" />
@@ -7,24 +13,28 @@
   <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License" />
 </p>
 
-<h1 align="center">Madera.Tools</h1>
-
 <p align="center">
   <strong>The screenshot tool built for the AI era.</strong>
   <br />
-  Capture. Annotate. Extract. Paste into Claude, ChatGPT, or any AI. One keystroke.
+  Capture. Annotate. SSH upload to your servers. Paste into Claude, ChatGPT, or any AI. One keystroke.
   <br />
   <br />
-  <a href="#installation">Install</a> &middot; <a href="#features">Features</a> &middot; <a href="#ai-optimized">AI-Optimized</a> &middot; <a href="#quickpaste">QuickPaste</a> &middot; <a href="#themes">Themes</a> &middot; <a href="#architecture">Architecture</a>
+  <a href="#installation">Install</a> &middot; <a href="#features">Features</a> &middot; <a href="#ssh-upload">SSH Upload</a> &middot; <a href="#quickpaste">QuickPaste</a> &middot; <a href="#themes">Themes</a> &middot; <a href="#architecture">Architecture</a>
 </p>
 
 ---
+
+<p align="center">
+  <img src="docs/screenshots/editor-annotations.png" alt="Madera.Tools Editor with annotations" width="800" />
+</p>
 
 ## Why Madera?
 
 Every AI conversation starts the same way: *"here's a screenshot of..."*
 
 Madera was built for developers who live in AI-assisted workflows. One hotkey captures your screen, opens a full annotation editor, and copies the result to your clipboard -- ready to paste into Claude, ChatGPT, Cursor, or any AI tool. No save dialogs. No file management. Just capture and paste.
+
+**Working remotely?** SSH upload pushes screenshots directly to your servers -- configure multiple machines, and the remote path is copied to your clipboard for instant `@reference` in AI tools. Perfect for headless setups, pair programming over SSH, or sharing screenshots across your dev fleet.
 
 But Madera goes further: **OCR text extraction**, **pinnable overlays**, **scroll capture**, a **token cost estimator**, **clipboard history with auto-paste**, and **prompt snippet management** -- all wrapped in 11 themes and running at native speed.
 
@@ -41,6 +51,18 @@ But Madera goes further: **OCR text extraction**, **pinnable overlays**, **scrol
 - **Smart canvas sizing** -- image automatically fills the editor, adapts on resize
 - **Export formats** -- PNG (lossless), JPEG (smallest), WebP (modern) -- choose per export
 
+<p align="center">
+  <img src="docs/screenshots/editor-clean.png" alt="Screenshot Editor" width="700" />
+</p>
+
+### SSH Upload -- Built for Remote Developers
+
+Push screenshots to any server with one click. Configure multiple SSH targets, and the remote URL is copied to your clipboard -- ready to paste as a reference in Claude, ChatGPT, or share with your team.
+
+<p align="center">
+  <img src="docs/screenshots/ssh-config.png" alt="SSH multi-server configuration" width="500" />
+</p>
+
 ### AI-Optimized
 
 Madera is purpose-built for AI vision workflows:
@@ -49,7 +71,6 @@ Madera is purpose-built for AI vision workflows:
 - **Auto-resize to 1568px** -- optimal resolution for Claude, no wasted tokens on oversized images
 - **OCR text extraction** -- extract text from any screenshot with one click (Tesseract.js, cross-platform, zero setup)
 - **Pin screenshot overlay** -- pin a screenshot as an always-on-top draggable overlay while you discuss it with an AI
-- **SSH upload** -- push screenshots to remote servers (multi-server support), path copied to clipboard for instant `@reference`
 - **Format selector** -- switch between PNG/JPEG/WebP to optimize file size before sharing
 
 ### Unified Clipboard History
@@ -61,6 +82,10 @@ Madera is purpose-built for AI vision workflows:
 - **SQLite-backed** -- fast search across thousands of entries
 
 ### QuickPaste Snippets
+
+<p align="center">
+  <img src="docs/screenshots/quickpaste.png" alt="QuickPaste clipboard history" width="350" />
+</p>
 
 - **Instant access** -- `Ctrl+Alt+V` opens clipboard history, `Ctrl+Alt+Q` opens snippets
 - **Text & image snippets** -- paste code blocks, boilerplate, prompt templates, or image assets
@@ -82,6 +107,10 @@ Madera is purpose-built for AI vision workflows:
 ### 11 Themes
 
 Pick your vibe. Every theme applies across the entire app.
+
+<p align="center">
+  <img src="docs/screenshots/themes.png" alt="11 themes available" width="500" />
+</p>
 
 | Theme | Style |
 |-------|-------|
