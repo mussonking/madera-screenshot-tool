@@ -54,7 +54,7 @@ fn apply_layer_shell_overlay(window: &tauri::WebviewWindow, width: i32) {
             w.set_anchor(gtk_layer_shell::Edge::Bottom, true);
             w.set_anchor(gtk_layer_shell::Edge::Right, true);
             w.set_anchor(gtk_layer_shell::Edge::Left, false);
-            w.set_namespace("madera-tools-overlay");
+            w.set_namespace("madera-ss-overlay");
             w.set_keyboard_interactivity(false);
             gtk_win.set_size_request(width, -1);
         }
@@ -947,7 +947,7 @@ fn open_main_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-        .title("Madera.Tools")
+        .title("Madera.SS")
         .inner_size(1200.0, 800.0)
         .center()
         .resizable(true)
@@ -965,7 +965,7 @@ fn open_history_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>
     }
 
     let window = WebviewWindowBuilder::new(app, "history", WebviewUrl::App("index.html#history".into()))
-        .title("Madera.Tools - History")
+        .title("Madera.SS - History")
         .inner_size(1200.0, 800.0)
         .center()
         .resizable(true)
@@ -2360,7 +2360,7 @@ pub fn run() {
                 .icon(icon)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
-                .tooltip("Madera.Tools")
+                .tooltip("Madera.SS")
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "quit" => {
                         // Set flag to allow exit
@@ -2539,7 +2539,7 @@ pub fn run() {
                 }
             });
 
-            // Handle CLI action flags on first launch (e.g. `madera-tools --capture`)
+            // Handle CLI action flags on first launch (e.g. `madera-ss --capture`)
             let cli_args: Vec<String> = std::env::args().collect();
             if cli_args.iter().any(|a| a == "--capture") {
                 let h = app.handle().clone();

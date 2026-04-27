@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="docs/logo.png" alt="Madera.Tools Logo" width="128" />
+  <img src="docs/logo.png" alt="Madera.SS Logo" width="128" />
 </p>
 
-<h1 align="center">Madera.Tools</h1>
+<h1 align="center">Madera.SS</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Built_with-Tauri_2-FFC131?style=for-the-badge&logo=tauri&logoColor=white" alt="Tauri 2" />
@@ -25,7 +25,7 @@
 ---
 
 <p align="center">
-  <img src="docs/screenshots/editor-annotations.png" alt="Madera.Tools Editor with annotations" width="800" />
+  <img src="docs/screenshots/editor-annotations.png" alt="Madera.SS Editor with annotations" width="800" />
 </p>
 
 ## Why Madera?
@@ -128,14 +128,25 @@ Pick your vibe. Every theme applies across the entire app.
 
 ## Installation
 
+### Pre-built Binaries (Recommended)
+
+Download the latest release for your platform from [GitHub Releases](https://github.com/mussonking/madera-ss/releases/latest):
+
+| Platform | Format | Notes |
+|----------|--------|-------|
+| Linux (Debian/Ubuntu/Pop!_OS) | `.deb` | `sudo dpkg -i Madera.SS_*.deb` |
+| Linux (universal) | `.AppImage` | `chmod +x` then run |
+| Linux (Fedora/RHEL) | `.rpm` | `sudo rpm -i Madera.SS-*.rpm` |
+| Windows 10/11 | `.exe` / `.msi` | Run installer |
+
 ### From Source
 
 **Prerequisites:** Node.js 18+, Rust toolchain, system dependencies for Tauri 2
 
 ```bash
 # Clone
-git clone https://github.com/mussonking/madera-screenshot-tool.git
-cd madera-screenshot-tool
+git clone https://github.com/mussonking/madera-ss.git
+cd madera-ss
 
 # Install dependencies
 npm install
@@ -147,7 +158,7 @@ npm run tauri dev
 npm run tauri build
 
 # Install the binary (Linux)
-sudo cp src-tauri/target/release/madera-tools /usr/bin/madera-tools
+sudo cp src-tauri/target/release/madera-ss /usr/bin/madera-ss
 ```
 
 ### Linux System Dependencies
@@ -183,17 +194,17 @@ Build with `npm run tauri build`. The resulting `.msi` / `.exe` installer is in 
 Global shortcuts use CLI flags. Set these up in your desktop environment's keyboard settings:
 
 ```bash
-madera-tools --capture        # Screenshot
-madera-tools --history        # History panel
-madera-tools --colorpicker    # Color picker
-madera-tools --quickpaste     # QuickPaste (history tab)
-madera-tools --snippets       # QuickPaste (snippets tab)
+madera-ss --capture        # Screenshot
+madera-ss --history        # History panel
+madera-ss --colorpicker    # Color picker
+madera-ss --quickpaste     # QuickPaste (history tab)
+madera-ss --snippets       # QuickPaste (snippets tab)
 ```
 
 ## Architecture
 
 ```
-madera-screenshot-tool/
+madera-ss/
   src/                          # React frontend
     components/
       Editor.tsx                # Fabric.js annotation canvas + AI tools

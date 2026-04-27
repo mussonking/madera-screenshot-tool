@@ -68,7 +68,7 @@ export default function Dashboard() {
         <div className="flex items-center gap-3">
           <LayoutDashboard size={24} style={{ color: theme.accentColor }} />
           <h1 className="text-xl font-bold">
-            Madera.Tools
+            Madera.SS
           </h1>
         </div>
 

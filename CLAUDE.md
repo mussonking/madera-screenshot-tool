@@ -9,10 +9,10 @@ npm run tauri dev          # Dev mode (Vite HMR on :1420, Tauri hot-reload)
 npm run tauri build        # Production build (bundles .deb, .rpm, .AppImage)
 
 # Install after build:
-sudo cp src-tauri/target/release/madera-tools /usr/bin/madera-tools
+sudo cp src-tauri/target/release/madera-ss /usr/bin/madera-ss
 
 # IMPORTANT: Clear WebKit cache after frontend changes or theme won't update:
-rm -rf ~/.cache/madera-tools/ ~/.local/share/madera-tools/storage
+rm -rf ~/.cache/madera-ss/ ~/.local/share/madera-ss/storage
 ```
 
 No test suite exists. Verify changes by building and manually testing.
@@ -50,7 +50,7 @@ Single-instance app. CLI flags (`--capture`, `--history`, `--colorpicker`, `--qu
 - **Primary target**: Pop!_OS 24.04 / COSMIC desktop / Wayland (scale factor 1)
 - **Wayland overlays**: Use `gtk-layer-shell` for always-on-top panels. Standard `always_on_top` is ignored by Wayland compositors.
 - **Text paste on Wayland**: `wtype` (not `xdotool`)
-- **WebKit cache location**: `~/.cache/madera-tools/` and `~/.local/share/madera-tools/storage` -- must clear after rebuilds if frontend changes don't appear
+- **WebKit cache location**: `~/.cache/madera-ss/` and `~/.local/share/madera-ss/storage` -- must clear after rebuilds if frontend changes don't appear
 
 ## Key Patterns
 

@@ -195,7 +195,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         <label className="flex items-center justify-between cursor-pointer">
                                             <div>
                                                 <div className="text-white font-medium">Start at Login</div>
-                                                <div className="text-sm text-slate-400">Launch Madera.Tools automatically when you log in</div>
+                                                <div className="text-sm text-slate-400">Launch Madera.SS automatically when you log in</div>
                                             </div>
                                             <div className={`w-11 h-6 rounded-full transition-colors relative ${isAutostart ? 'bg-blue-500' : 'bg-slate-600'}`}>
                                                 <div className={`absolute top-1 w-4 h-4 rounded-full bg-white transition-transform ${isAutostart ? 'left-6' : 'left-1'}`} />
