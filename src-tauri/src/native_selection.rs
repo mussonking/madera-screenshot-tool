@@ -10,8 +10,15 @@ use std::thread;
 
 #[cfg(windows)]
 use windows::{
-    core::*, Win32::Foundation::*, Win32::Graphics::Gdi::*,
-    Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::Input::KeyboardAndMouse::*,
+    core::*,
+    Win32::Foundation::*,
+    Win32::Graphics::Gdi::*,
+    Win32::System::LibraryLoader::GetModuleHandleW,
+    Win32::UI::HiDpi::{
+        SetProcessDpiAwarenessContext, SetThreadDpiAwarenessContext,
+        DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+    },
+    Win32::UI::Input::KeyboardAndMouse::*,
     Win32::UI::WindowsAndMessaging::*,
 };
 
@@ -199,6 +206,11 @@ pub fn show_native_selection() -> Option<SelectionResult> {
 
 #[cfg(windows)]
 unsafe fn run_selection_window(result_sender: mpsc::Sender<SelectionResult>) {
+    // Keep capture, overlay, and mouse coordinates in the same physical-pixel space.
+    // Without this, Windows DPI virtualization can shift crops on scaled monitors.
+    let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    let _ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
     // Get VIRTUAL screen dimensions (all monitors combined)
     let virtual_x = GetSystemMetrics(SM_XVIRTUALSCREEN); // Can be negative!
     let virtual_y = GetSystemMetrics(SM_YVIRTUALSCREEN); // Can be negative!

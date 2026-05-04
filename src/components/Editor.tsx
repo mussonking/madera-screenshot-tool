@@ -798,19 +798,43 @@ export default function Editor() {
       canvas.discardActiveObject();
       canvas.renderAll();
 
-      const finalDataUrl = canvas.toDataURL({
-        format: fmt,
-        multiplier: 1,
-        quality: q
-      });
+      const previousWidth = canvas.getWidth();
+      const previousHeight = canvas.getHeight();
+      const previousZoom = canvas.getZoom();
+      const previousViewport = canvas.viewportTransform
+        ? ([...canvas.viewportTransform] as [number, number, number, number, number, number])
+        : undefined;
+      const exportWidth = baseCanvasSize.width || previousWidth;
+      const exportHeight = baseCanvasSize.height || previousHeight;
+      const multiplier = imageSize.width > 0 && exportWidth > 0 ? imageSize.width / exportWidth : 1;
 
-      if (!finalDataUrl || finalDataUrl.length < 100) {
-         showNotification("Error: Generated image is empty", "error");
-         return "";
+      try {
+        canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+        canvas.setZoom(1);
+        canvas.setDimensions({ width: exportWidth, height: exportHeight });
+        canvas.renderAll();
+
+        const finalDataUrl = canvas.toDataURL({
+          format: fmt,
+          multiplier,
+          quality: q
+        });
+
+        if (!finalDataUrl || finalDataUrl.length < 100) {
+           showNotification("Error: Generated image is empty", "error");
+           return "";
+        }
+
+        // Return base64 without the data URL prefix
+        return finalDataUrl.replace(/^data:image\/[^;]+;base64,/, "");
+      } finally {
+        canvas.setDimensions({ width: previousWidth, height: previousHeight });
+        if (previousViewport) {
+          canvas.setViewportTransform(previousViewport);
+        }
+        canvas.setZoom(previousZoom);
+        canvas.renderAll();
       }
-
-      // Return base64 without the data URL prefix
-      return finalDataUrl.replace(/^data:image\/[^;]+;base64,/, "");
     } catch (e) {
       console.error("Exception in getExportedImage:", e);
       showNotification(`Export exception: ${e}`, "error");
