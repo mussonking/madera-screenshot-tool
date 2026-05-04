@@ -6,13 +6,13 @@ npm-debug.log*
 
 # Rust
 src-tauri/target/
-src-tauri/Cargo.lock
 
 # OS
 .DS_Store
 Thumbs.db
 
 # IDE
+.claude/
 .vscode/
 .idea/
 *.swp

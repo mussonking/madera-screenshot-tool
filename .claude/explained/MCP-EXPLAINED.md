@@ -1,1 +1,0 @@
-/home/musson/.claude/explained/MCP-EXPLAINED.md

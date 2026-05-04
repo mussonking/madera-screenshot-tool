@@ -186,12 +186,12 @@ impl ClipboardMonitor {
                     // No change detected - use adaptive polling
                     let count = no_change_count.fetch_add(1, Ordering::Relaxed);
                     drop(last);
-                    
+
                     // Adaptive sleep based on inactivity
                     let sleep_ms = match count {
-                        0..=10 => 300,   // Active: poll fast
-                        11..=30 => 500,  // Calm: slow down
-                        _ => 1000        // Inactive: poll slow
+                        0..=10 => 300,  // Active: poll fast
+                        11..=30 => 500, // Calm: slow down
+                        _ => 1000,      // Inactive: poll slow
                     };
                     thread::sleep(Duration::from_millis(sleep_ms));
                     continue;

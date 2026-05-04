@@ -66,7 +66,10 @@ pub fn snapshot_for_paste() {
     if let Some(focus) = FOCUS.get() {
         if let Ok(mut guard) = focus.lock() {
             guard.snapshot = guard.handle.clone();
-            eprintln!("[focus_tracker] snapshot_for_paste: has_handle={}", guard.snapshot.is_some());
+            eprintln!(
+                "[focus_tracker] snapshot_for_paste: has_handle={}",
+                guard.snapshot.is_some()
+            );
         }
     }
 }
@@ -79,8 +82,12 @@ pub fn activate_last_focused() -> bool {
     if let Some(f) = focus {
         if let Ok(guard) = f.lock() {
             let handle = guard.snapshot.as_ref().or(guard.handle.as_ref());
-            eprintln!("[focus_tracker] activate_last_focused: snapshot={} manager={} seat={}",
-                guard.snapshot.is_some(), guard.manager.is_some(), guard.seat.is_some());
+            eprintln!(
+                "[focus_tracker] activate_last_focused: snapshot={} manager={} seat={}",
+                guard.snapshot.is_some(),
+                guard.manager.is_some(),
+                guard.seat.is_some()
+            );
             match (handle, &guard.manager, &guard.seat) {
                 (Some(_handle), Some(manager), Some(seat)) => {
                     manager.activate(_handle, seat);
@@ -127,11 +134,17 @@ fn activate_last_focused_x11() -> bool {
         .output()
     {
         Ok(output) if output.status.success() => {
-            eprintln!("[focus_tracker] X11 fallback: activated window {}", window_id);
+            eprintln!(
+                "[focus_tracker] X11 fallback: activated window {}",
+                window_id
+            );
             true
         }
         Ok(output) => {
-            eprintln!("[focus_tracker] X11 fallback: xdotool failed: {}", String::from_utf8_lossy(&output.stderr));
+            eprintln!(
+                "[focus_tracker] X11 fallback: xdotool failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             false
         }
         Err(e) => {
@@ -155,13 +168,25 @@ struct AppState {
 fn run_wayland_thread(shared: Arc<Mutex<SharedFocus>>) {
     eprintln!("[focus_tracker] thread started");
     let conn = match Connection::connect_to_env() {
-        Ok(c) => { eprintln!("[focus_tracker] wayland connected"); c }
-        Err(e) => { eprintln!("[focus_tracker] wayland connect FAILED: {e}"); return; }
+        Ok(c) => {
+            eprintln!("[focus_tracker] wayland connected");
+            c
+        }
+        Err(e) => {
+            eprintln!("[focus_tracker] wayland connect FAILED: {e}");
+            return;
+        }
     };
 
     let (globals, mut queue) = match registry_queue_init::<AppState>(&conn) {
-        Ok(x) => { eprintln!("[focus_tracker] registry init OK"); x }
-        Err(e) => { eprintln!("[focus_tracker] registry init FAILED: {e}"); return; }
+        Ok(x) => {
+            eprintln!("[focus_tracker] registry init OK");
+            x
+        }
+        Err(e) => {
+            eprintln!("[focus_tracker] registry init FAILED: {e}");
+            return;
+        }
     };
 
     let qh = queue.handle();
@@ -170,7 +195,12 @@ fn run_wayland_thread(shared: Arc<Mutex<SharedFocus>>) {
     let _info: Option<ZcosmicToplevelInfoV1> = globals.bind(&qh, 1..=3, ()).ok();
     let manager: Option<ZcosmicToplevelManagerV1> = globals.bind(&qh, 1..=4, ()).ok();
     let seat: Option<WlSeat> = globals.bind(&qh, 1..=9, ()).ok();
-    eprintln!("[focus_tracker] info={} manager={} seat={}", _info.is_some(), manager.is_some(), seat.is_some());
+    eprintln!(
+        "[focus_tracker] info={} manager={} seat={}",
+        _info.is_some(),
+        manager.is_some(),
+        seat.is_some()
+    );
 
     if let Ok(mut guard) = shared.lock() {
         guard.manager = manager;
@@ -187,7 +217,10 @@ fn run_wayland_thread(shared: Arc<Mutex<SharedFocus>>) {
         eprintln!("[focus_tracker] roundtrip failed: {e}");
         return;
     }
-    eprintln!("[focus_tracker] roundtrip done, {} toplevels tracked", state.toplevels.len());
+    eprintln!(
+        "[focus_tracker] roundtrip done, {} toplevels tracked",
+        state.toplevels.len()
+    );
 
     loop {
         if queue.blocking_dispatch(&mut state).is_err() {
@@ -221,7 +254,12 @@ impl Dispatch<ZcosmicToplevelInfoV1, ()> for AppState {
         _qh: &QueueHandle<Self>,
     ) {
         if let zcosmic_toplevel_info_v1::Event::Toplevel { toplevel } = event {
-            state.toplevels.insert(toplevel, ToplevelMeta { app_id: String::new() });
+            state.toplevels.insert(
+                toplevel,
+                ToplevelMeta {
+                    app_id: String::new(),
+                },
+            );
         }
     }
 }

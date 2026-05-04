@@ -1,32 +1,37 @@
-# Madera.Tools Installation Script
-# Builds the app and creates Start Menu shortcut
+# Madera.SS Windows build helper
+#
+# Builds the production app and prints the generated installer paths.
+# Pass -RunInstaller to launch the NSIS installer after a successful build.
 
-Write-Host "Building Madera.Tools..." -ForegroundColor Cyan
+param(
+    [switch]$RunInstaller
+)
 
-# Build release version
-Set-Location "$PSScriptRoot\src-tauri"
-cargo build --release
+Set-Location $PSScriptRoot
+
+Write-Host "Building Madera.SS..." -ForegroundColor Cyan
+npm run tauri build
 
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "Build failed!" -ForegroundColor Red
-    exit 1
+    Write-Host "Build failed." -ForegroundColor Red
+    exit $LASTEXITCODE
 }
 
-Write-Host "Build successful!" -ForegroundColor Green
+$BundleDir = Join-Path $PSScriptRoot "src-tauri\target\release\bundle"
+$Setup = Get-ChildItem $BundleDir -Recurse -Filter "Madera.SS_*_x64-setup.exe" |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
+$Msi = Get-ChildItem $BundleDir -Recurse -Filter "Madera.SS_*_x64_en-US.msi" |
+    Sort-Object LastWriteTime -Descending |
+    Select-Object -First 1
 
-# Create Start Menu shortcut
-$WshShell = New-Object -ComObject WScript.Shell
-$ShortcutPath = "$env:APPDATA\Microsoft\Windows\Start Menu\Programs\Madera.Tools.lnk"
-$Shortcut = $WshShell.CreateShortcut($ShortcutPath)
-$Shortcut.TargetPath = "$PSScriptRoot\src-tauri\target\release\madera-tools.exe"
-$Shortcut.WorkingDirectory = "$PSScriptRoot\src-tauri\target\release"
-$Shortcut.Description = "Madera Tools - Screenshot, Color Picker, History, Desktop Guardian"
-$Shortcut.IconLocation = "$PSScriptRoot\src-tauri\target\release\madera-tools.exe,0"
-$Shortcut.Save()
+Write-Host ""
+Write-Host "Build complete." -ForegroundColor Green
+if ($Setup) { Write-Host "NSIS installer: $($Setup.FullName)" -ForegroundColor Yellow }
+if ($Msi) { Write-Host "MSI installer:  $($Msi.FullName)" -ForegroundColor Yellow }
 
-Write-Host "Start Menu shortcut created!" -ForegroundColor Green
-Write-Host ""
-Write-Host "Installation complete! You can now launch 'Madera.Tools' from the Start Menu" -ForegroundColor Yellow
-Write-Host ""
-Write-Host "To start the app now, run:" -ForegroundColor Cyan
-Write-Host "  .\src-tauri\target\release\madera-tools.exe" -ForegroundColor White
+if ($RunInstaller -and $Setup) {
+    Write-Host ""
+    Write-Host "Launching installer..." -ForegroundColor Cyan
+    Start-Process -FilePath $Setup.FullName
+}

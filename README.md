@@ -149,10 +149,13 @@ git clone https://github.com/mussonking/madera-ss.git
 cd madera-ss
 
 # Install dependencies
-npm install
+npm ci
 
 # Development mode (hot-reload)
 npm run tauri dev
+
+# Release readiness check
+npm run release:check
 
 # Production build
 npm run tauri build
@@ -167,12 +170,18 @@ sudo cp src-tauri/target/release/madera-ss /usr/bin/madera-ss
 # Ubuntu/Pop!_OS/Debian
 sudo apt install libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev \
   libxdo-dev libx11-dev libxrandr-dev libxcomposite-dev libxdamage-dev \
-  slop xdotool ydotool wtype  # region selection + paste tools
+  slop slurp xdotool ydotool wtype  # region selection + paste tools
 ```
 
 ### Windows
 
-Build with `npm run tauri build`. The resulting `.msi` / `.exe` installer is in `src-tauri/target/release/bundle/`.
+Build with `.\build.ps1` or `npm run tauri build`. The resulting `.msi` / `.exe` installer is in `src-tauri/target/release/bundle/`.
+
+To build and print the installer paths from PowerShell:
+
+```powershell
+.\install.ps1
+```
 
 ## Keyboard Shortcuts
 
@@ -218,7 +227,12 @@ madera-ss/
       theme.ts                  # 11 theme definitions (single source of truth)
     App.tsx                     # Hash-based view router
   src-tauri/src/                # Rust backend
-    lib.rs                      # Core: 50+ commands, windows, tray, shortcuts
+    lib.rs                      # Tauri commands, windows, tray, shortcuts orchestration
+    platform/                   # OS boundary: Windows/Linux/native desktop behavior
+      mod.rs                    # Common platform API selected with cfg
+      windows.rs                # Win32 focus tracking, paste injection, monitor work areas
+      linux.rs                  # X11/Wayland focus, layer-shell overlays, ydotool/wtype/xdotool
+      other.rs                  # No-op fallback for unsupported desktop targets
     snippet_manager.rs          # Snippet CRUD (JSON storage)
     history.rs                  # SQLite history management
     clipboard_monitor.rs        # Background clipboard watcher (adaptive polling)
@@ -243,12 +257,30 @@ madera-ss/
 
 ## Cross-Platform
 
+Official releases currently target Windows and Linux.
+
 | Platform | Status |
 |----------|--------|
 | Linux (X11/GNOME) | Full support |
 | Linux (Wayland/COSMIC) | Full support (layer-shell overlays) |
 | Windows | Full support (Win32 native selection) |
-| macOS | Partial (no layer-shell overlays) |
+| macOS | Not officially packaged yet |
+
+Platform-specific desktop behavior lives behind `src-tauri/src/platform/`. Tauri commands should call `platform::...` functions instead of importing Win32, X11, Wayland, `gtk-layer-shell`, `ydotool`, `wtype`, or `xdotool` directly.
+
+Settings are stored under the current Tauri app identifier. On startup, Madera migrates legacy `app_settings` from older identifiers into the current config file and preserves unrelated settings such as theme/layout data.
+
+## Release Hygiene
+
+Before tagging a release:
+
+```bash
+npm ci
+npm run release:check
+npm run tauri build
+```
+
+`release:check` verifies that package metadata, Tauri metadata, Rust metadata, and the lockfiles agree on the app name/version before GitHub Actions publishes binaries.
 
 ## Contributing
 

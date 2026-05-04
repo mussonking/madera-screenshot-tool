@@ -1,3 +1,2 @@
-$env:Path = $env:Path + ";C:\Users\Musson\.cargo\bin"
-Set-Location "C:\Users\Musson\Desktop\Claude Code\screenshot-tool"
+Set-Location $PSScriptRoot
 npm run tauri build

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Copy, Monitor, Palette, Upload, Keyboard, Plus, Trash2, Pencil, Check, X } from 'lucide-react';
+import { Settings, Copy, Monitor, Palette, Upload, Keyboard, Plus, Trash2, Pencil, Check, X, Wifi, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { THEMES, ThemeName, loadThemeFromStore, saveThemeToStore } from '../utils/theme';
 
@@ -31,6 +31,11 @@ interface ClipboardSettings {
     auto_cleanup_days: number | null;
 }
 
+type SshTestStatus = {
+    type: 'testing' | 'success' | 'error';
+    message: string;
+};
+
 
 
 export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
@@ -57,6 +62,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     });
 
     const [currentTheme, setCurrentTheme] = useState<ThemeName>("default");
+    const [sshTestStatus, setSshTestStatus] = useState<Record<string, SshTestStatus>>({});
 
     useEffect(() => {
         if (isOpen) {
@@ -91,6 +97,52 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             await invoke('update_settings', { settings: newSettings });
         } catch (err) {
             console.error('Failed to save app settings:', err);
+        }
+    };
+
+    const formatSshError = (err: unknown) => {
+        const message = String(err);
+        if (message.includes("SSH host not configured")) {
+            return "Serveur SSH manquant.";
+        }
+        if (message.includes("SSH remote path not configured")) {
+            return "Chemin distant manquant.";
+        }
+        if (message.includes("Authentication failed")) {
+            return "Authentification SSH échouée. Vérifiez l'utilisateur et la clé SSH.";
+        }
+        if (message.includes("Cannot connect to")) {
+            return "Connexion impossible. Vérifiez l'adresse du serveur et le port 22.";
+        }
+        if (message.includes("Remote path is not writable") || message.includes("No such file or directory")) {
+            return "Dossier distant introuvable ou non accessible.";
+        }
+        if (message.includes("ssh not found") || message.includes("scp not found")) {
+            return "OpenSSH n'est pas disponible sur ce système.";
+        }
+        return message;
+    };
+
+    const testSshServer = async (server: SshServer) => {
+        setSshTestStatus((current) => ({
+            ...current,
+            [server.id]: { type: 'testing', message: 'Test en cours...' },
+        }));
+
+        try {
+            await invoke<string>('test_ssh_server', {
+                host: server.host,
+                remotePath: server.remote_path,
+            });
+            setSshTestStatus((current) => ({
+                ...current,
+                [server.id]: { type: 'success', message: 'Connexion OK, dossier accessible.' },
+            }));
+        } catch (err) {
+            setSshTestStatus((current) => ({
+                ...current,
+                [server.id]: { type: 'error', message: formatSshError(err) },
+            }));
         }
     };
 
@@ -361,17 +413,39 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                                                 <div className="text-slate-500 text-xs">{server.remote_path}</div>
                                                             </div>
                                                             <div className="flex gap-2">
+                                                                <button onClick={() => testSshServer(server)}
+                                                                    disabled={sshTestStatus[server.id]?.type === 'testing'}
+                                                                    title="Test SSH"
+                                                                    aria-label="Test SSH"
+                                                                    className="p-2 text-slate-400 hover:text-cyan-300 hover:bg-slate-700 rounded-lg transition-colors disabled:opacity-50">
+                                                                    {sshTestStatus[server.id]?.type === 'testing' ? <Loader2 size={14} className="animate-spin" /> : <Wifi size={14} />}
+                                                                </button>
                                                                 <button onClick={() => setEditingServer({ ...server })}
+                                                                    title="Edit"
+                                                                    aria-label="Edit"
                                                                     className="p-2 text-slate-400 hover:text-white hover:bg-slate-700 rounded-lg transition-colors">
                                                                     <Pencil size={14} />
                                                                 </button>
                                                                 <button onClick={() => {
                                                                     const updated = appSettings.ssh_servers.filter(s => s.id !== server.id);
                                                                     saveAppSettings({ ...appSettings, ssh_servers: updated });
-                                                                }} className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition-colors">
+                                                                }}
+                                                                    title="Delete"
+                                                                    aria-label="Delete"
+                                                                    className="p-2 text-slate-400 hover:text-red-400 hover:bg-slate-700 rounded-lg transition-colors">
                                                                     <Trash2 size={14} />
                                                                 </button>
                                                             </div>
+                                                        </div>
+                                                    )}
+                                                    {sshTestStatus[server.id]?.message && (
+                                                        <div className={`px-4 pb-4 text-xs break-words ${sshTestStatus[server.id].type === 'success'
+                                                            ? 'text-emerald-300'
+                                                            : sshTestStatus[server.id].type === 'error'
+                                                                ? 'text-red-300'
+                                                                : 'text-slate-400'
+                                                            }`}>
+                                                            {sshTestStatus[server.id].message}
                                                         </div>
                                                     )}
                                                 </div>

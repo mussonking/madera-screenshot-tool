@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Mutex;
 use uuid::Uuid;
 
@@ -30,7 +30,7 @@ impl SnippetManager {
         let app_dir = dirs::data_local_dir()
             .ok_or_else(|| "Cannot find app data dir".to_string())?
             .join("screenshot-tool");
-            
+
         fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
 
         let file_path = app_dir.join("snippets.json");
@@ -52,7 +52,11 @@ impl SnippetManager {
     pub fn get_all(&self) -> Vec<SnippetItem> {
         let guard = self.snippets.lock().unwrap();
         let mut items = guard.clone();
-        items.sort_by(|a, b| a.category.cmp(&b.category).then(a.sort_order.cmp(&b.sort_order)));
+        items.sort_by(|a, b| {
+            a.category
+                .cmp(&b.category)
+                .then(a.sort_order.cmp(&b.sort_order))
+        });
         items
     }
 
@@ -67,10 +71,22 @@ impl SnippetManager {
         cats
     }
 
-    pub fn add_with_category(&self, title: String, content_type: String, content: String, category: String) -> SnippetItem {
+    pub fn add_with_category(
+        &self,
+        title: String,
+        content_type: String,
+        content: String,
+        category: String,
+    ) -> SnippetItem {
         let sort_order = {
             let guard = self.snippets.lock().unwrap();
-            guard.iter().filter(|s| s.category == category).map(|s| s.sort_order).max().unwrap_or(0) + 1
+            guard
+                .iter()
+                .filter(|s| s.category == category)
+                .map(|s| s.sort_order)
+                .max()
+                .unwrap_or(0)
+                + 1
         };
         let new_item = SnippetItem {
             id: Uuid::new_v4().to_string(),
@@ -93,7 +109,13 @@ impl SnippetManager {
     pub fn add(&self, title: String, content_type: String, content: String) -> SnippetItem {
         let sort_order = {
             let guard = self.snippets.lock().unwrap();
-            guard.iter().filter(|s| s.category == "General").map(|s| s.sort_order).max().unwrap_or(0) + 1
+            guard
+                .iter()
+                .filter(|s| s.category == "General")
+                .map(|s| s.sort_order)
+                .max()
+                .unwrap_or(0)
+                + 1
         };
         let new_item = SnippetItem {
             id: Uuid::new_v4().to_string(),
@@ -117,7 +139,7 @@ impl SnippetManager {
         let mut guard = self.snippets.lock().unwrap();
         let initial_len = guard.len();
         guard.retain(|item| item.id != id);
-        
+
         let changed = guard.len() < initial_len;
         if changed {
             drop(guard);

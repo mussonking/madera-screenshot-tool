@@ -1,20 +1,17 @@
 //! Native Win32 selection overlay - no WebView, no flash, instant display
 
+use base64::Engine;
+#[cfg(windows)]
+use image::{ImageBuffer, Rgba};
 #[cfg(windows)]
 use std::sync::mpsc;
 #[cfg(windows)]
 use std::thread;
-use base64::Engine;
-#[cfg(windows)]
-use image::{ImageBuffer, Rgba};
 
 #[cfg(windows)]
 use windows::{
-    core::*,
-    Win32::Foundation::*,
-    Win32::Graphics::Gdi::*,
-    Win32::System::LibraryLoader::GetModuleHandleW,
-    Win32::UI::Input::KeyboardAndMouse::*,
+    core::*, Win32::Foundation::*, Win32::Graphics::Gdi::*,
+    Win32::System::LibraryLoader::GetModuleHandleW, Win32::UI::Input::KeyboardAndMouse::*,
     Win32::UI::WindowsAndMessaging::*,
 };
 
@@ -36,7 +33,17 @@ unsafe fn extract_region_as_base64(
     let old_bitmap = SelectObject(crop_dc, crop_bitmap);
 
     // Copy the region
-    let _ = BitBlt(crop_dc, 0, 0, width_i, height_i, screenshot_dc, x, y, SRCCOPY);
+    let _ = BitBlt(
+        crop_dc,
+        0,
+        0,
+        width_i,
+        height_i,
+        screenshot_dc,
+        x,
+        y,
+        SRCCOPY,
+    );
 
     // Get bitmap info
     let mut bmi = BITMAPINFO {
@@ -94,8 +101,7 @@ unsafe fn extract_region_as_base64(
     }
 
     // Create image and encode to PNG
-    let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
-        ImageBuffer::from_raw(width, height, rgba_pixels)?;
+    let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_raw(width, height, rgba_pixels)?;
 
     let mut png_data: Vec<u8> = Vec::new();
     let mut cursor = std::io::Cursor::new(&mut png_data);
@@ -107,7 +113,9 @@ unsafe fn extract_region_as_base64(
 /// Result of a selection operation
 #[derive(Debug, Clone)]
 pub struct SelectionResult {
+    #[allow(dead_code)]
     pub x: i32,
+    #[allow(dead_code)]
     pub y: i32,
     pub width: u32,
     pub height: u32,
@@ -121,11 +129,14 @@ pub struct SelectionResult {
 struct SelectionState {
     // Screenshot bitmap
     screenshot_dc: HDC,
+    #[allow(dead_code)]
     screenshot_bitmap: HBITMAP,
     screen_width: i32,
     screen_height: i32,
     // Virtual screen offset (for multi-monitor - can be negative)
+    #[allow(dead_code)]
     virtual_x: i32,
+    #[allow(dead_code)]
     virtual_y: i32,
 
     // Selection coordinates
@@ -169,10 +180,8 @@ pub fn show_native_selection() -> Option<SelectionResult> {
     let (tx, rx) = mpsc::channel();
 
     // Run the selection window in a separate thread
-    thread::spawn(move || {
-        unsafe {
-            run_selection_window(tx);
-        }
+    thread::spawn(move || unsafe {
+        run_selection_window(tx);
     });
 
     // Wait for result
@@ -191,8 +200,8 @@ pub fn show_native_selection() -> Option<SelectionResult> {
 #[cfg(windows)]
 unsafe fn run_selection_window(result_sender: mpsc::Sender<SelectionResult>) {
     // Get VIRTUAL screen dimensions (all monitors combined)
-    let virtual_x = GetSystemMetrics(SM_XVIRTUALSCREEN);  // Can be negative!
-    let virtual_y = GetSystemMetrics(SM_YVIRTUALSCREEN);  // Can be negative!
+    let virtual_x = GetSystemMetrics(SM_XVIRTUALSCREEN); // Can be negative!
+    let virtual_y = GetSystemMetrics(SM_YVIRTUALSCREEN); // Can be negative!
     let screen_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     let screen_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
@@ -203,7 +212,17 @@ unsafe fn run_selection_window(result_sender: mpsc::Sender<SelectionResult>) {
     let old_bitmap = SelectObject(mem_dc, bitmap);
 
     // Copy entire virtual screen to bitmap (note: source starts at virtual_x, virtual_y)
-    let _ = BitBlt(mem_dc, 0, 0, screen_width, screen_height, screen_dc, virtual_x, virtual_y, SRCCOPY);
+    let _ = BitBlt(
+        mem_dc,
+        0,
+        0,
+        screen_width,
+        screen_height,
+        screen_dc,
+        virtual_x,
+        virtual_y,
+        SRCCOPY,
+    );
 
     ReleaseDC(HWND::default(), screen_dc);
 
@@ -246,7 +265,7 @@ unsafe fn run_selection_window(result_sender: mpsc::Sender<SelectionResult>) {
         class_name,
         w!("Selection"),
         WS_POPUP | WS_VISIBLE,
-        virtual_x,  // Start at virtual screen origin (can be negative)
+        virtual_x, // Start at virtual screen origin (can be negative)
         virtual_y,
         screen_width,
         screen_height,
@@ -254,7 +273,8 @@ unsafe fn run_selection_window(result_sender: mpsc::Sender<SelectionResult>) {
         None,
         hinstance,
         None,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Show and update
     let _ = ShowWindow(hwnd, SW_SHOW);
@@ -279,6 +299,7 @@ unsafe fn run_selection_window(result_sender: mpsc::Sender<SelectionResult>) {
 }
 
 #[cfg(windows)]
+#[allow(static_mut_refs)]
 unsafe extern "system" fn window_proc(
     hwnd: HWND,
     msg: u32,
@@ -294,11 +315,13 @@ unsafe extern "system" fn window_proc(
                 // Draw the screenshot
                 let _ = BitBlt(
                     hdc,
-                    0, 0,
+                    0,
+                    0,
                     state.screen_width,
                     state.screen_height,
                     state.screenshot_dc,
-                    0, 0,
+                    0,
+                    0,
                     SRCCOPY,
                 );
 
@@ -313,11 +336,22 @@ unsafe extern "system" fn window_proc(
 
                 // Use alpha blending for overlay
                 let blend_dc = CreateCompatibleDC(hdc);
-                let blend_bitmap = CreateCompatibleBitmap(hdc, state.screen_width, state.screen_height);
+                let blend_bitmap =
+                    CreateCompatibleBitmap(hdc, state.screen_width, state.screen_height);
                 let old_blend = SelectObject(blend_dc, blend_bitmap);
 
                 // Fill with semi-transparent black
-                let _ = BitBlt(blend_dc, 0, 0, state.screen_width, state.screen_height, state.screenshot_dc, 0, 0, SRCCOPY);
+                let _ = BitBlt(
+                    blend_dc,
+                    0,
+                    0,
+                    state.screen_width,
+                    state.screen_height,
+                    state.screenshot_dc,
+                    0,
+                    0,
+                    SRCCOPY,
+                );
                 FillRect(blend_dc, &full_rect, overlay_brush);
 
                 // Blend
@@ -328,8 +362,16 @@ unsafe extern "system" fn window_proc(
                     AlphaFormat: 0,
                 };
                 let _ = GdiAlphaBlend(
-                    hdc, 0, 0, state.screen_width, state.screen_height,
-                    blend_dc, 0, 0, state.screen_width, state.screen_height,
+                    hdc,
+                    0,
+                    0,
+                    state.screen_width,
+                    state.screen_height,
+                    blend_dc,
+                    0,
+                    0,
+                    state.screen_width,
+                    state.screen_height,
                     blend_func,
                 );
 
@@ -349,10 +391,13 @@ unsafe extern "system" fn window_proc(
                         // Clear selection area to show original image
                         let _ = BitBlt(
                             hdc,
-                            sel_x, sel_y,
-                            sel_w, sel_h,
+                            sel_x,
+                            sel_y,
+                            sel_w,
+                            sel_h,
                             state.screenshot_dc,
-                            sel_x, sel_y,
+                            sel_x,
+                            sel_y,
                             SRCCOPY,
                         );
 
@@ -362,7 +407,7 @@ unsafe extern "system" fn window_proc(
                         let null_brush = GetStockObject(NULL_BRUSH);
                         let old_brush = SelectObject(hdc, null_brush);
 
-                        Rectangle(hdc, sel_x, sel_y, sel_x + sel_w, sel_y + sel_h);
+                        let _ = Rectangle(hdc, sel_x, sel_y, sel_x + sel_w, sel_y + sel_h);
 
                         SelectObject(hdc, old_pen);
                         SelectObject(hdc, old_brush);
@@ -370,7 +415,8 @@ unsafe extern "system" fn window_proc(
 
                         // Draw dimensions text
                         let dim_text = format!("{} × {}", sel_w, sel_h);
-                        let text_wide: Vec<u16> = dim_text.encode_utf16().chain(std::iter::once(0)).collect();
+                        let text_wide: Vec<u16> =
+                            dim_text.encode_utf16().chain(std::iter::once(0)).collect();
 
                         // Background for text
                         let text_bg = CreateSolidBrush(COLORREF(0x004560E9));
@@ -386,13 +432,21 @@ unsafe extern "system" fn window_proc(
                         // Draw text
                         SetBkMode(hdc, TRANSPARENT);
                         SetTextColor(hdc, COLORREF(0x00FFFFFF)); // White
-                        TextOutW(hdc, sel_x + 8, sel_y - 20, &text_wide[..text_wide.len()-1]);
+                        let _ = TextOutW(
+                            hdc,
+                            sel_x + 8,
+                            sel_y - 20,
+                            &text_wide[..text_wide.len() - 1],
+                        );
                     }
                 }
 
                 // Draw instructions at top
                 let instructions = "Click and drag to select • ESC to cancel";
-                let instr_wide: Vec<u16> = instructions.encode_utf16().chain(std::iter::once(0)).collect();
+                let instr_wide: Vec<u16> = instructions
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect();
 
                 let instr_bg = CreateSolidBrush(COLORREF(0x00000000));
                 let instr_rect = RECT {
@@ -407,10 +461,15 @@ unsafe extern "system" fn window_proc(
                 SetBkMode(hdc, TRANSPARENT);
                 SetTextColor(hdc, COLORREF(0x00FFFFFF));
                 let _ = SetTextAlign(hdc, TA_CENTER);
-                TextOutW(hdc, state.screen_width / 2, 20, &instr_wide[..instr_wide.len()-1]);
+                let _ = TextOutW(
+                    hdc,
+                    state.screen_width / 2,
+                    20,
+                    &instr_wide[..instr_wide.len() - 1],
+                );
             }
 
-            EndPaint(hwnd, &ps);
+            let _ = EndPaint(hwnd, &ps);
             LRESULT(0)
         }
 
@@ -523,7 +582,10 @@ fn is_wayland() -> bool {
 #[cfg(not(windows))]
 pub fn show_native_selection() -> Option<SelectionResult> {
     eprintln!("[native_selection] Starting screenshot capture");
-    eprintln!("[native_selection] Session type: XDG_SESSION_TYPE={:?}", std::env::var("XDG_SESSION_TYPE").ok());
+    eprintln!(
+        "[native_selection] Session type: XDG_SESSION_TYPE={:?}",
+        std::env::var("XDG_SESSION_TYPE").ok()
+    );
 
     if is_wayland() {
         // Wayland: use slurp for interactive region selection + xcap for capture
@@ -575,9 +637,14 @@ fn try_slop_x11() -> Option<SelectionResult> {
         return None; // User cancelled (ESC)
     }
 
-    let output_str = String::from_utf8_lossy(&slop_output.stdout).trim().to_string();
+    let output_str = String::from_utf8_lossy(&slop_output.stdout)
+        .trim()
+        .to_string();
     eprintln!("[native_selection] slop output: {}", output_str);
-    let vals: Vec<i32> = output_str.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+    let vals: Vec<i32> = output_str
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
     if vals.len() != 4 {
         eprintln!("[native_selection] slop returned unexpected format");
         return None;
@@ -594,14 +661,17 @@ fn try_slop_x11() -> Option<SelectionResult> {
     let center_x = sel_x + sel_w / 2;
     let center_y = sel_y + sel_h / 2;
 
-    let target_monitor = monitors.iter().find(|m| {
-        let mx = m.x();
-        let my = m.y();
-        let mw = m.width() as i32;
-        let mh = m.height() as i32;
-        center_x >= mx && center_x < mx + mw && center_y >= my && center_y < my + mh
-    }).or_else(|| monitors.iter().find(|m| m.is_primary()))
-      .or(monitors.first())?;
+    let target_monitor = monitors
+        .iter()
+        .find(|m| {
+            let mx = m.x();
+            let my = m.y();
+            let mw = m.width() as i32;
+            let mh = m.height() as i32;
+            center_x >= mx && center_x < mx + mw && center_y >= my && center_y < my + mh
+        })
+        .or_else(|| monitors.iter().find(|m| m.is_primary()))
+        .or(monitors.first())?;
 
     let mon_x = target_monitor.x();
     let mon_y = target_monitor.y();
@@ -622,7 +692,9 @@ fn try_slop_x11() -> Option<SelectionResult> {
     let cropped = dynamic_image.crop_imm(crop_x, crop_y, crop_w, crop_h);
 
     let mut buffer = std::io::Cursor::new(Vec::new());
-    cropped.write_to(&mut buffer, image::ImageFormat::Png).ok()?;
+    cropped
+        .write_to(&mut buffer, image::ImageFormat::Png)
+        .ok()?;
 
     let base64_data = base64::engine::general_purpose::STANDARD.encode(buffer.get_ref());
 
@@ -655,8 +727,13 @@ fn try_slurp_xcap() -> Option<SelectionResult> {
         return None; // User cancelled (ESC) or slurp not available
     }
 
-    let output_str = String::from_utf8_lossy(&slurp_output.stdout).trim().to_string();
-    let vals: Vec<i32> = output_str.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+    let output_str = String::from_utf8_lossy(&slurp_output.stdout)
+        .trim()
+        .to_string();
+    let vals: Vec<i32> = output_str
+        .split_whitespace()
+        .filter_map(|s| s.parse().ok())
+        .collect();
     if vals.len() != 4 {
         return None;
     }
@@ -673,14 +750,17 @@ fn try_slurp_xcap() -> Option<SelectionResult> {
     let center_x = sel_x + sel_w / 2;
     let center_y = sel_y + sel_h / 2;
 
-    let target_monitor = monitors.iter().find(|m| {
-        let mx = m.x();
-        let my = m.y();
-        let mw = m.width() as i32;
-        let mh = m.height() as i32;
-        center_x >= mx && center_x < mx + mw && center_y >= my && center_y < my + mh
-    }).or_else(|| monitors.iter().find(|m| m.is_primary()))
-      .or(monitors.first())?;
+    let target_monitor = monitors
+        .iter()
+        .find(|m| {
+            let mx = m.x();
+            let my = m.y();
+            let mw = m.width() as i32;
+            let mh = m.height() as i32;
+            center_x >= mx && center_x < mx + mw && center_y >= my && center_y < my + mh
+        })
+        .or_else(|| monitors.iter().find(|m| m.is_primary()))
+        .or(monitors.first())?;
 
     let mon_x = target_monitor.x();
     let mon_y = target_monitor.y();
@@ -701,7 +781,9 @@ fn try_slurp_xcap() -> Option<SelectionResult> {
     let cropped = dynamic_image.crop_imm(crop_x, crop_y, crop_w, crop_h);
 
     let mut buffer = std::io::Cursor::new(Vec::new());
-    cropped.write_to(&mut buffer, image::ImageFormat::Png).ok()?;
+    cropped
+        .write_to(&mut buffer, image::ImageFormat::Png)
+        .ok()?;
 
     let base64_data = base64::engine::general_purpose::STANDARD.encode(buffer.get_ref());
 

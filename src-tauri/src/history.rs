@@ -1,6 +1,5 @@
 use base64::Engine;
 use chrono::{DateTime, Utc};
-use image::ImageFormat;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
@@ -113,6 +112,7 @@ pub struct ScreenshotRecord {
 
 pub struct HistoryManager {
     conn: Connection,
+    #[allow(dead_code)]
     data_dir: PathBuf,
     screenshots_dir: PathBuf,
     thumbnails_dir: PathBuf,
@@ -212,6 +212,7 @@ impl HistoryManager {
     }
 
     /// Check if content with this hash already exists in history
+    #[allow(dead_code)]
     fn content_hash_exists(&self, hash: &str) -> Result<bool, HistoryError> {
         let count: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM history_items WHERE content_hash = ?1",
@@ -268,7 +269,8 @@ impl HistoryManager {
         let mut thumb_buffer = Cursor::new(Vec::new());
         use image::codecs::jpeg::JpegEncoder;
         let mut encoder = JpegEncoder::new_with_quality(&mut thumb_buffer, 70);
-        encoder.encode_image(&thumbnail)
+        encoder
+            .encode_image(&thumbnail)
             .map_err(|e| HistoryError::ImageError(e.to_string()))?;
 
         fs::write(&thumbnail_path, thumb_buffer.get_ref())?;
@@ -563,7 +565,8 @@ impl HistoryManager {
         let mut thumb_buffer = Cursor::new(Vec::new());
         use image::codecs::jpeg::JpegEncoder;
         let mut encoder = JpegEncoder::new_with_quality(&mut thumb_buffer, 70);
-        encoder.encode_image(&thumbnail)
+        encoder
+            .encode_image(&thumbnail)
             .map_err(|e| HistoryError::ImageError(e.to_string()))?;
 
         fs::write(&thumbnail_path, thumb_buffer.get_ref())?;

@@ -7,9 +7,9 @@ use xcap::Monitor;
 use crate::{CaptureResult, MonitorInfo};
 
 #[cfg(windows)]
-use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-#[cfg(windows)]
 use windows::Win32::Foundation::POINT;
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
 #[derive(Error, Debug)]
 pub enum CaptureError {

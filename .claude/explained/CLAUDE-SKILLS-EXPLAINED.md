@@ -1,1 +1,0 @@
-/home/musson/.claude/explained/CLAUDE-SKILLS-EXPLAINED.md

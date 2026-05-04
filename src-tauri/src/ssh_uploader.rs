@@ -5,8 +5,10 @@ use thiserror::Error;
 pub enum SshError {
     #[error("Failed to connect: {0}")]
     ConnectionFailed(String),
-    #[error("Authentication failed")]
-    AuthFailed,
+    #[error("Authentication failed: {0}")]
+    AuthFailed(String),
+    #[error("Remote path is not writable or does not exist: {0}")]
+    RemotePathFailed(String),
     #[error("Upload failed: {0}")]
     UploadFailed(String),
 }
@@ -18,6 +20,33 @@ pub struct SshUploader {
 impl SshUploader {
     pub fn new(host: String) -> Self {
         Self { host }
+    }
+
+    pub fn test_remote_path(&self, remote_path: &str, _passphrase: &str) -> Result<(), SshError> {
+        let remote_path = remote_path.trim_end_matches('/');
+        let quoted_path = shell_quote(remote_path);
+        let check_command = format!("test -d {0} && test -w {0}", quoted_path);
+
+        println!("[SSH] Testing remote path: {}:{}", self.host, remote_path);
+
+        let output = std::process::Command::new(ssh_cmd())
+            .arg("-o")
+            .arg("StrictHostKeyChecking=no")
+            .arg("-o")
+            .arg("BatchMode=yes")
+            .arg(&self.host)
+            .arg(check_command)
+            .output()
+            .map_err(|e| SshError::UploadFailed(format!("ssh not found: {}", e)))?;
+
+        if output.status.success() {
+            println!("[SSH] Remote path test complete!");
+            Ok(())
+        } else {
+            let msg = command_output_message(&output);
+            println!("[SSH] Remote path test failed: {}", msg);
+            Err(self.classify_failure(&msg, remote_path))
+        }
     }
 
     pub fn upload_file(
@@ -51,13 +80,7 @@ impl SshUploader {
 
         // Run system scp (inherits the native OpenSSH agent automatically)
         // Use Windows native OpenSSH scp so it can talk to the Windows SSH agent
-        let scp_cmd = if cfg!(target_os = "windows") {
-            r"C:\Windows\System32\OpenSSH\scp.exe"
-        } else {
-            "scp"
-        };
-
-        let output = std::process::Command::new(scp_cmd)
+        let output = std::process::Command::new(scp_cmd())
             .arg("-o")
             .arg("StrictHostKeyChecking=no")
             .arg("-o")
@@ -74,20 +97,77 @@ impl SshUploader {
             println!("[SSH] Upload complete!");
             Ok(remote_path.to_string())
         } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let msg = if stderr.is_empty() { stdout } else { stderr };
-
-            if msg.contains("Permission denied") || msg.contains("Authentication failed") {
-                println!("[SSH] Auth failed: {}", msg);
-                Err(SshError::AuthFailed)
-            } else if msg.contains("Name or service not known") || msg.contains("Temporary failure") {
-                println!("[SSH] Connection failed: {}", msg);
-                Err(SshError::ConnectionFailed(format!("Cannot connect to {}: {}", self.host, msg)))
-            } else {
-                println!("[SSH] Upload failed: {}", msg);
-                Err(SshError::UploadFailed(msg.to_string()))
-            }
+            let msg = command_output_message(&output);
+            println!("[SSH] Upload failed: {}", msg);
+            Err(self.classify_failure(&msg, remote_path))
         }
     }
+
+    fn classify_failure(&self, msg: &str, remote_path: &str) -> SshError {
+        if msg.contains("Permission denied") || msg.contains("Authentication failed") {
+            SshError::AuthFailed(format!(
+                "OpenSSH could not authenticate to {}. Check the username, SSH key, and ssh-agent. Details: {}",
+                self.host, msg
+            ))
+        } else if msg.contains("Name or service not known")
+            || msg.contains("Temporary failure")
+            || msg.contains("Could not resolve hostname")
+            || msg.contains("Connection timed out")
+            || msg.contains("Connection refused")
+            || msg.contains("No route to host")
+            || msg.contains("Network is unreachable")
+            || msg.contains("Operation timed out")
+        {
+            SshError::ConnectionFailed(format!(
+                "Cannot connect to {}. Check the server address and port 22. Details: {}",
+                self.host, msg
+            ))
+        } else if msg.contains("No such file or directory")
+            || msg.contains("not a directory")
+            || msg.contains("Failure")
+        {
+            SshError::RemotePathFailed(format!(
+                "The remote destination '{}' could not be written. Create the folder and verify permissions. Details: {}",
+                remote_path, msg
+            ))
+        } else {
+            SshError::UploadFailed(msg.to_string())
+        }
+    }
+}
+
+fn ssh_cmd() -> &'static str {
+    if cfg!(target_os = "windows") {
+        r"C:\Windows\System32\OpenSSH\ssh.exe"
+    } else {
+        "ssh"
+    }
+}
+
+fn scp_cmd() -> &'static str {
+    if cfg!(target_os = "windows") {
+        r"C:\Windows\System32\OpenSSH\scp.exe"
+    } else {
+        "scp"
+    }
+}
+
+fn command_output_message(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let output_msg = if stderr.trim().is_empty() {
+        stdout.trim()
+    } else {
+        stderr.trim()
+    };
+
+    if output_msg.is_empty() {
+        format!("command exited with status {}", output.status)
+    } else {
+        output_msg.to_string()
+    }
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
 }

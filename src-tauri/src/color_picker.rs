@@ -88,8 +88,8 @@ fn rgb_to_hsl(r: u8, g: u8, b: u8) -> HslColor {
 pub fn get_pixel_color(x: i32, y: i32) -> Option<ColorInfo> {
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC};
         use windows::Win32::Foundation::HWND;
+        use windows::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC};
 
         unsafe {
             let hdc = GetDC(HWND::default());
@@ -160,8 +160,8 @@ pub fn get_magnifier_region(
 ) -> Option<Vec<Vec<(u8, u8, u8)>>> {
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC};
         use windows::Win32::Foundation::HWND;
+        use windows::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC};
 
         unsafe {
             let hdc = GetDC(HWND::default());
@@ -294,7 +294,7 @@ impl ColorFormat {
 pub struct ColorPickSettings {
     pub format: ColorFormat,
     pub max_history: usize,
-    pub magnifier_size: u8,  // radius in pixels
+    pub magnifier_size: u8, // radius in pixels
 }
 
 impl Default for ColorPickSettings {

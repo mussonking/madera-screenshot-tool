@@ -1,1 +1,0 @@
-/home/musson/.claude/explained/OPENDECK-SOOMFON.md

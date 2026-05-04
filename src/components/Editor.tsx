@@ -958,6 +958,8 @@ export default function Editor() {
         displayMsg = "❌ Authentification SSH échouée. Vérifiez vos clés SSH et la configuration.";
       } else if (errorMsg.includes("Cannot connect to") || errorMsg.includes("ConnectionFailed")) {
         displayMsg = `❌ Impossible de se connecter au serveur. Vérifiez l'adresse du serveur et votre connexion réseau.`;
+      } else if (errorMsg.includes("Remote path is not writable") || errorMsg.includes("No such file or directory")) {
+        displayMsg = "❌ Dossier distant introuvable ou non accessible. Vérifiez le chemin SSH dans Paramètres.";
       } else if (errorMsg.includes("scp not found")) {
         displayMsg = "❌ scp n'est pas installé. Installez OpenSSH sur votre système.";
       } else if (errorMsg.includes("SSH upload failed")) {
