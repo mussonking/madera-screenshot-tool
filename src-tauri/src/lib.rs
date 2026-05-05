@@ -10,6 +10,7 @@ mod ssh_uploader;
 #[cfg(target_os = "linux")]
 mod wayland_focus;
 
+use base64::Engine;
 use capture::CaptureManager;
 use clipboard::ClipboardManager;
 use clipboard_monitor::{ClipboardContent, ClipboardMonitor, ClipboardSettings};
@@ -871,12 +872,38 @@ fn open_selection_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Erro
     Ok(())
 }
 
+fn decoded_image_size(image_data: &str) -> Option<(u32, u32)> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(image_data)
+        .ok()?;
+    let image = image::load_from_memory(&bytes).ok()?;
+    Some((image.width(), image.height()))
+}
+
+fn make_rgba_opaque(image: &mut image::RgbaImage) {
+    for pixel in image.pixels_mut() {
+        pixel.0[3] = 255;
+    }
+}
+
 fn open_editor_window(
     app: &AppHandle,
     image_data: &str,
     width: u32,
     height: u32,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let requested_width = width;
+    let requested_height = height;
+    let (width, height) =
+        decoded_image_size(image_data).unwrap_or((requested_width, requested_height));
+
+    if width != requested_width || height != requested_height {
+        eprintln!(
+            "[lib] adjusted editor image size from {}x{} to decoded PNG {}x{}",
+            requested_width, requested_height, width, height
+        );
+    }
+
     // DON'T close existing editor windows - allow multiple editors
     // Each new screenshot opens in a new editor window
 
@@ -1187,16 +1214,25 @@ async fn capture_scrolling(
                     .find(|m| m.is_primary())
                     .or(monitors.first())
                 {
-                    if let Ok(screen) = mon.capture_image() {
+                    if let Ok(mut screen) = mon.capture_image() {
+                        make_rgba_opaque(&mut screen);
                         let img = image::DynamicImage::ImageRgba8(screen);
                         // Crop to window if we have geometry
-                        let cropped = if win_w > 0 && win_h > 0 {
+                        let mut cropped = if win_w > 0 && win_h > 0 {
                             let cx = (win_x - mon.x()).max(0) as u32;
                             let cy = (win_y - mon.y()).max(0) as u32;
-                            img.crop_imm(cx, cy, win_w as u32, win_h as u32)
+                            let crop_w = (win_w as u32).min(img.width().saturating_sub(cx));
+                            let crop_h = (win_h as u32).min(img.height().saturating_sub(cy));
+                            if crop_w == 0 || crop_h == 0 {
+                                continue;
+                            }
+                            img.crop_imm(cx, cy, crop_w, crop_h)
                         } else {
                             img
                         };
+                        if let Some(rgba) = cropped.as_mut_rgba8() {
+                            make_rgba_opaque(rgba);
+                        }
                         images.push(cropped);
                     }
                 }
@@ -1217,12 +1253,14 @@ async fn capture_scrolling(
         let total_width = images.iter().map(|i| i.width()).max().unwrap_or(0);
         let total_height: u32 = images.iter().map(|i| i.height()).sum();
 
-        let mut stitched = image::RgbaImage::new(total_width, total_height);
+        let mut stitched =
+            image::RgbaImage::from_pixel(total_width, total_height, image::Rgba([0, 0, 0, 255]));
         let mut y_offset = 0u32;
         for img in &images {
             image::imageops::overlay(&mut stitched, &img.to_rgba8(), 0, y_offset as i64);
             y_offset += img.height();
         }
+        make_rgba_opaque(&mut stitched);
 
         let dynamic = image::DynamicImage::ImageRgba8(stitched);
         let mut buffer = std::io::Cursor::new(Vec::new());

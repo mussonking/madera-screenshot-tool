@@ -66,10 +66,32 @@ const STROKE_WIDTHS = [1, 2, 4, 6, 8, 12];
 
 const CANVAS_PADDING = 0;
 
+const fitImageToContainer = (
+  sourceWidth: number,
+  sourceHeight: number,
+  containerWidth: number,
+  containerHeight: number
+) => {
+  const availableWidth = Math.max(1, containerWidth - CANVAS_PADDING * 2);
+  const availableHeight = Math.max(1, containerHeight - CANVAS_PADDING * 2);
+
+  let width = sourceWidth;
+  let height = sourceHeight;
+
+  if (sourceWidth > availableWidth || sourceHeight > availableHeight) {
+    const ratio = Math.min(availableWidth / sourceWidth, availableHeight / sourceHeight);
+    width = Math.max(1, Math.floor(sourceWidth * ratio));
+    height = Math.max(1, Math.floor(sourceHeight * ratio));
+  }
+
+  return { width, height };
+};
+
 export default function Editor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fabricRef = useRef<fabric.Canvas | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const sourceImageSizeRef = useRef({ width: 0, height: 0 });
 
   const [tool, setTool] = useState<Tool>("pen"); // Default to pen
   const [currentTheme, setCurrentTheme] = useState<ThemeName>("default");
@@ -124,6 +146,12 @@ export default function Editor() {
 
   const theme = THEMES[currentTheme];
   const COLORS = DRAWING_COLORS;
+
+  const getSourceImageSize = () => (
+    sourceImageSizeRef.current.width > 0
+      ? sourceImageSizeRef.current
+      : imageSize
+  );
 
   // Use refs for history to avoid stale closure issues
   const historyRef = useRef<string[]>([]);
@@ -229,14 +257,7 @@ export default function Editor() {
 
       const imgW = imageSize.width;
       const imgH = imageSize.height;
-      let newW = imgW;
-      let newH = imgH;
-
-      if (imgW > cw || imgH > ch) {
-        const ratio = Math.min(cw / imgW, ch / imgH);
-        newW = Math.floor(imgW * ratio);
-        newH = Math.floor(imgH * ratio);
-      }
+      const { width: newW, height: newH } = fitImageToContainer(imgW, imgH, cw, ch);
 
       setBaseCanvasSize({ width: newW, height: newH });
       const canvas = fabricRef.current;
@@ -413,7 +434,6 @@ export default function Editor() {
         console.error("No pending capture returned from backend");
         return;
       }
-      setImageSize({ width: pending.width, height: pending.height });
 
       // Wait for DOM layout to be ready (requestAnimationFrame ensures paint)
       const waitForLayout = () => {
@@ -438,30 +458,15 @@ export default function Editor() {
       fabricRef.current.dispose();
     }
 
-    // Calculate canvas size to fit in container
-    // Calculate canvas size to fit in container
     const container = containerRef.current;
 
     // Fallback to window size if container is not ready (prevents 0/negative values)
     const cw = container.clientWidth || window.innerWidth;
     const ch = container.clientHeight || window.innerHeight;
 
-    const maxWidth = cw;
-    const maxHeight = ch;
-
-    // Calculate scaled image dimensions
-    let imageWidth = width;
-    let imageHeight = height;
-
-    if (width > maxWidth - CANVAS_PADDING * 2 || height > maxHeight - CANVAS_PADDING * 2) {
-      const ratio = Math.min((maxWidth - CANVAS_PADDING * 2) / width, (maxHeight - CANVAS_PADDING * 2) / height);
-      imageWidth = Math.floor(width * ratio);
-      imageHeight = Math.floor(height * ratio);
-    }
-
-    // Canvas size = image size + padding on all sides
-    const canvasWidth = imageWidth + CANVAS_PADDING * 2;
-    const canvasHeight = imageHeight + CANVAS_PADDING * 2;
+    const initialSize = fitImageToContainer(width, height, cw, ch);
+    const canvasWidth = initialSize.width + CANVAS_PADDING * 2;
+    const canvasHeight = initialSize.height + CANVAS_PADDING * 2;
 
     // Store base canvas size for zoom calculations
     setBaseCanvasSize({ width: canvasWidth, height: canvasHeight });
@@ -479,11 +484,30 @@ export default function Editor() {
     const img = new Image();
 
     img.onload = () => {
+      const sourceWidth = img.naturalWidth || width;
+      const sourceHeight = img.naturalHeight || height;
+      const sourceSize = { width: sourceWidth, height: sourceHeight };
+      const displaySize = fitImageToContainer(sourceWidth, sourceHeight, cw, ch);
+
+      if (sourceWidth !== width || sourceHeight !== height) {
+        console.warn("Capture metadata size did not match decoded PNG size", {
+          metadata: { width, height },
+          decoded: sourceSize,
+        });
+      }
+
+      sourceImageSizeRef.current = sourceSize;
+      setImageSize(sourceSize);
+      setBaseCanvasSize(displaySize);
+      canvas.setDimensions(displaySize);
+
       const fabricImage = new fabric.FabricImage(img, {
         left: CANVAS_PADDING,
         top: CANVAS_PADDING,
-        scaleX: imageWidth / width,
-        scaleY: imageHeight / height,
+        originX: "left",
+        originY: "top",
+        scaleX: displaySize.width / sourceWidth,
+        scaleY: displaySize.height / sourceHeight,
         selectable: false,
         evented: false,
       });
@@ -804,9 +828,10 @@ export default function Editor() {
       const previousViewport = canvas.viewportTransform
         ? ([...canvas.viewportTransform] as [number, number, number, number, number, number])
         : undefined;
+      const sourceSize = getSourceImageSize();
       const exportWidth = baseCanvasSize.width || previousWidth;
       const exportHeight = baseCanvasSize.height || previousHeight;
-      const multiplier = imageSize.width > 0 && exportWidth > 0 ? imageSize.width / exportWidth : 1;
+      const multiplier = sourceSize.width > 0 && exportWidth > 0 ? sourceSize.width / exportWidth : 1;
 
       try {
         canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
@@ -875,10 +900,11 @@ export default function Editor() {
     try {
       const imageData = await getExportedImage('png');
       if (!imageData) return;
+      const sourceSize = getSourceImageSize();
       await invoke("pin_screenshot", {
         imageData,
-        width: imageSize.width,
-        height: imageSize.height,
+        width: sourceSize.width,
+        height: sourceSize.height,
       });
       showNotification("Screenshot pinned!", "success");
     } catch (err) {
@@ -905,10 +931,11 @@ export default function Editor() {
 
       // Save to history
       console.log("Invoking save_to_history...");
+      const sourceSize = getSourceImageSize();
       await invoke("save_to_history", {
         imageData,
-        width: imageSize.width,
-        height: imageSize.height,
+        width: sourceSize.width,
+        height: sourceSize.height,
       });
 
       // Don't close window - user may want to continue editing
@@ -942,10 +969,11 @@ export default function Editor() {
         await invoke("save_image_to_file", { imageData, path });
 
         // Also save to history
+        const sourceSize = getSourceImageSize();
         await invoke("save_to_history", {
           imageData,
-          width: imageSize.width,
-          height: imageSize.height,
+          width: sourceSize.width,
+          height: sourceSize.height,
         });
       }
     } catch (err) {

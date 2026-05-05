@@ -1,5 +1,5 @@
 use base64::Engine;
-use image::{imageops::FilterType, DynamicImage, ImageFormat};
+use image::{imageops::FilterType, DynamicImage, ImageFormat, RgbaImage};
 use std::io::Cursor;
 use thiserror::Error;
 use xcap::Monitor;
@@ -24,6 +24,12 @@ pub enum CaptureError {
 }
 
 pub struct CaptureManager;
+
+fn make_opaque(image: &mut RgbaImage) {
+    for pixel in image.pixels_mut() {
+        pixel.0[3] = 255;
+    }
+}
 
 impl CaptureManager {
     pub fn new() -> Self {
@@ -132,9 +138,10 @@ impl CaptureManager {
             .unwrap_or(&monitors[0]);
 
         // Only capture the monitor where the cursor is
-        let image = target_monitor
+        let mut image = target_monitor
             .capture_image()
             .map_err(|e| CaptureError::CaptureFailure(e.to_string()))?;
+        make_opaque(&mut image);
 
         let width = image.width();
         let height = image.height();
@@ -163,9 +170,10 @@ impl CaptureManager {
             .find(|m| m.is_primary())
             .ok_or(CaptureError::NoMonitors)?;
 
-        let image = primary
+        let mut image = primary
             .capture_image()
             .map_err(|e| CaptureError::CaptureFailure(e.to_string()))?;
+        make_opaque(&mut image);
 
         let width = image.width();
         let height = image.height();
