@@ -21,6 +21,7 @@ import {
   Clipboard,
   Filter,
   Pipette,
+  Upload,
 } from "lucide-react";
 import type { HistoryItem, HistoryItemType } from "../stores/appStore";
 import { THEMES, ThemeName, loadThemeFromStore } from "../utils/theme";
@@ -37,6 +38,8 @@ const getItemTypeIcon = (type: HistoryItemType) => {
       return <Clipboard size={14} className="text-purple-400" />;
     case "color_pick":
       return <Pipette size={14} className="text-yellow-400" />;
+    case "ssh_upload":
+      return <Upload size={14} className="text-cyan-400" />;
   }
 };
 
@@ -50,6 +53,8 @@ const getItemTypeLabel = (type: HistoryItemType) => {
       return "Image";
     case "color_pick":
       return "Color";
+    case "ssh_upload":
+      return "SSH Upload";
   }
 };
 
@@ -506,6 +511,11 @@ export default function History() {
                   type="color_pick"
                   label="Colors"
                   icon={<Pipette size={14} />}
+                />
+                <FilterButton
+                  type="ssh_upload"
+                  label="SSH Uploads"
+                  icon={<Upload size={14} />}
                 />
               </div>
             </div>

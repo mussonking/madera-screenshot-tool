@@ -18,7 +18,7 @@ export interface ScreenshotRecord {
 }
 
 // Unified history item types
-export type HistoryItemType = "screenshot" | "clipboard_text" | "clipboard_image" | "color_pick";
+export type HistoryItemType = "screenshot" | "clipboard_text" | "clipboard_image" | "color_pick" | "ssh_upload";
 
 export interface HistoryItem {
   id: string;
@@ -55,10 +55,17 @@ export interface ColorPickSettings {
   magnifier_size: number;
 }
 
+export interface HistoryLimits {
+  screenshot: number;
+  clipboardText: number;
+  clipboardImage: number;
+  sshUpload: number;
+}
+
 export interface AppSettings {
   hotkey: string;
   auto_copy: boolean;
-  max_history: number;
+  history_limits: HistoryLimits;
   max_image_width: number | null;
 }
 
@@ -124,7 +131,12 @@ export const useAppStore = create<AppState>((set) => ({
   settings: {
     hotkey: "Ctrl+Shift+S",
     auto_copy: true,
-    max_history: 150,
+    history_limits: {
+      screenshot: 150,
+      clipboardText: 200,
+      clipboardImage: 200,
+      sshUpload: 50,
+    },
     max_image_width: 1568,
   },
   setSettings: (settings) => set({ settings }),

@@ -49,6 +49,7 @@ pub enum HistoryItemType {
     ClipboardText,
     ClipboardImage,
     ColorPick,
+    SshUpload,
 }
 
 impl std::fmt::Display for HistoryItemType {
@@ -58,6 +59,7 @@ impl std::fmt::Display for HistoryItemType {
             HistoryItemType::ClipboardText => write!(f, "clipboard_text"),
             HistoryItemType::ClipboardImage => write!(f, "clipboard_image"),
             HistoryItemType::ColorPick => write!(f, "color_pick"),
+            HistoryItemType::SshUpload => write!(f, "ssh_upload"),
         }
     }
 }
@@ -70,6 +72,7 @@ impl std::str::FromStr for HistoryItemType {
             "clipboard_text" => Ok(HistoryItemType::ClipboardText),
             "clipboard_image" => Ok(HistoryItemType::ClipboardImage),
             "color_pick" => Ok(HistoryItemType::ColorPick),
+            "ssh_upload" => Ok(HistoryItemType::SshUpload),
             _ => Err(format!("Unknown item type: {}", s)),
         }
     }
@@ -728,6 +731,97 @@ impl HistoryManager {
         })
     }
 
+    /// Save an SSH upload to the unified history table
+    pub fn save_ssh_upload(
+        &mut self,
+        base64_image: &str,
+        width: u32,
+        height: u32,
+        remote_path: &str,
+        max_history: usize,
+    ) -> Result<HistoryItem, HistoryError> {
+        // Decode image first to calculate hash for duplicate detection
+        let image_bytes = base64::engine::general_purpose::STANDARD
+            .decode(base64_image)
+            .map_err(|e| HistoryError::ImageError(e.to_string()))?;
+
+        // Calculate content hash for duplicate detection
+        let content_hash = calculate_content_hash(&image_bytes);
+
+        // Check if this exact image already exists
+        if let Some(existing_item) = self.get_item_by_hash(&content_hash)? {
+            return Ok(existing_item);
+        }
+
+        let id = Uuid::new_v4().to_string();
+        let now: DateTime<Utc> = Utc::now();
+        let timestamp = now.format("%Y-%m-%d_%H%M%S").to_string();
+        let filename = format!("ssh_{}_{}.png", timestamp, &id[..8]);
+        let thumbnail_filename = format!("ssh_thumb_{}_{}.jpg", timestamp, &id[..8]);
+
+        // Save image to clipboard directory (reuse existing infrastructure)
+        let image_path = self.clipboard_dir.join(&filename);
+        fs::write(&image_path, &image_bytes)?;
+
+        // Generate and save thumbnail
+        let img = image::load_from_memory(&image_bytes)
+            .map_err(|e| HistoryError::ImageError(e.to_string()))?;
+
+        let thumbnail = img.thumbnail(150, 150);
+        let thumbnail_path = self.thumbnails_dir.join(&thumbnail_filename);
+
+        let mut thumb_buffer = Cursor::new(Vec::new());
+        use image::codecs::jpeg::JpegEncoder;
+        let mut encoder = JpegEncoder::new_with_quality(&mut thumb_buffer, 70);
+        encoder
+            .encode_image(&thumbnail)
+            .map_err(|e| HistoryError::ImageError(e.to_string()))?;
+
+        fs::write(&thumbnail_path, thumb_buffer.get_ref())?;
+
+        let thumbnail_base64 =
+            base64::engine::general_purpose::STANDARD.encode(thumb_buffer.get_ref());
+
+        let created_at = now.to_rfc3339();
+        self.conn.execute(
+            "INSERT INTO history_items (id, item_type, created_at, filename, thumbnail_filename, width, height, saved_path, source_app, is_pinned, content_hash)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0, ?10)",
+            params![
+                id,
+                HistoryItemType::SshUpload.to_string(),
+                created_at,
+                filename,
+                thumbnail_filename,
+                width,
+                height,
+                Some(remote_path.to_string()),
+                Some("ssh".to_string()),
+                content_hash,
+            ],
+        )?;
+
+        // Cleanup old items
+        self.cleanup_old_history_items(max_history)?;
+
+        Ok(HistoryItem {
+            id,
+            item_type: HistoryItemType::SshUpload,
+            created_at,
+            filename: Some(filename),
+            thumbnail: Some(thumbnail_base64),
+            width: Some(width),
+            height: Some(height),
+            saved_path: Some(remote_path.to_string()),
+            text_content: None,
+            text_preview: None,
+            color_hex: None,
+            color_rgb: None,
+            color_hsl: None,
+            source_app: Some("ssh".to_string()),
+            is_pinned: false,
+        })
+    }
+
     /// Get all unified history items (screenshots + clipboard)
     pub fn get_all_history_items(
         &self,
@@ -869,7 +963,7 @@ impl HistoryManager {
 
                 let image_path = match item_type {
                     HistoryItemType::Screenshot => self.screenshots_dir.join(&filename),
-                    HistoryItemType::ClipboardImage => self.clipboard_dir.join(&filename),
+                    HistoryItemType::ClipboardImage | HistoryItemType::SshUpload => self.clipboard_dir.join(&filename),
                     HistoryItemType::ClipboardText | HistoryItemType::ColorPick => return Ok(None),
                 };
 
@@ -909,7 +1003,7 @@ impl HistoryManager {
             if let Some(filename) = filename {
                 let image_path = match item_type {
                     HistoryItemType::Screenshot => self.screenshots_dir.join(&filename),
-                    HistoryItemType::ClipboardImage => self.clipboard_dir.join(&filename),
+                    HistoryItemType::ClipboardImage | HistoryItemType::SshUpload => self.clipboard_dir.join(&filename),
                     HistoryItemType::ClipboardText | HistoryItemType::ColorPick => PathBuf::new(),
                 };
                 let _ = fs::remove_file(image_path);
@@ -919,7 +1013,8 @@ impl HistoryManager {
                 let _ = fs::remove_file(self.thumbnails_dir.join(&thumb_filename));
             }
 
-            is_screenshot = item_type == HistoryItemType::Screenshot;
+            is_screenshot = item_type == HistoryItemType::Screenshot
+                || item_type == HistoryItemType::SshUpload;
         }
 
         // Delete from unified table
@@ -1048,7 +1143,7 @@ impl HistoryManager {
                 if let Some(filename) = filename {
                     let image_path = match item_type {
                         HistoryItemType::Screenshot => self.screenshots_dir.join(&filename),
-                        HistoryItemType::ClipboardImage => self.clipboard_dir.join(&filename),
+                        HistoryItemType::ClipboardImage | HistoryItemType::SshUpload => self.clipboard_dir.join(&filename),
                         HistoryItemType::ClipboardText | HistoryItemType::ColorPick => {
                             PathBuf::new()
                         }

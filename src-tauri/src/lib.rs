@@ -54,10 +54,41 @@ pub struct PendingCapture {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryLimits {
+    pub screenshot: usize,
+    pub clipboard_text: usize,
+    pub clipboard_image: usize,
+    pub ssh_upload: usize,
+}
+
+impl Default for HistoryLimits {
+    fn default() -> Self {
+        Self {
+            screenshot: 150,
+            clipboard_text: 200,
+            clipboard_image: 200,
+            ssh_upload: 50,
+        }
+    }
+}
+
+impl HistoryLimits {
+    pub fn get(&self, item_type: &HistoryItemType) -> usize {
+        match item_type {
+            HistoryItemType::Screenshot => self.screenshot,
+            HistoryItemType::ClipboardText => self.clipboard_text,
+            HistoryItemType::ClipboardImage => self.clipboard_image,
+            HistoryItemType::ColorPick => 50,
+            HistoryItemType::SshUpload => self.ssh_upload,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     pub hotkey: String,
     pub auto_copy: bool,
-    pub max_history: usize,
+    pub history_limits: HistoryLimits,
     pub max_image_width: Option<u32>,
     // SSH Upload settings
     pub ssh_enabled: bool,
@@ -85,7 +116,7 @@ impl Default for AppSettings {
         Self {
             hotkey: "Ctrl+Shift+S".to_string(),
             auto_copy: true,
-            max_history: 100,
+            history_limits: HistoryLimits::default(),
             max_image_width: Some(1568),
             ssh_enabled: true,
             ssh_servers: vec![SshServer {
@@ -184,6 +215,26 @@ async fn upload_to_dev_server(
         .upload_file(&data, &full_remote_path, &passphrase)
         .map_err(|e| format!("SSH upload failed: {}", e))?;
 
+    // Save to history
+    {
+        let mut manager = state.history_manager.lock().map_err(|e| e.to_string())?;
+        let settings = state.settings.lock().map_err(|e| e.to_string())?;
+
+        // Get image dimensions from decoded data
+        let (width, height) = match image::load_from_memory(&data) {
+            Ok(img) => (img.width(), img.height()),
+            Err(_) => (0, 0),
+        };
+
+        let _ = manager.save_ssh_upload(
+            &base64::engine::general_purpose::STANDARD.encode(&data),
+            width,
+            height,
+            &full_remote_path,
+            settings.history_limits.get(&history::HistoryItemType::SshUpload),
+        );
+    }
+
     {
         let clipboard_manager = state.clipboard_manager.lock().map_err(|e| e.to_string())?;
         clipboard_manager
@@ -274,11 +325,11 @@ async fn save_to_history(
     height: u32,
 ) -> Result<ScreenshotRecord, String> {
     let mut manager = state.history_manager.lock().map_err(|e| e.to_string())?;
-    let clipboard_settings = state.clipboard_settings.lock().map_err(|e| e.to_string())?;
+    let settings = state.settings.lock().map_err(|e| e.to_string())?;
 
     // Save to unified history table (which also saves to legacy table for compatibility)
     let history_item = manager
-        .save_screenshot_to_unified(&image_data, width, height, clipboard_settings.max_items)
+        .save_screenshot_to_unified(&image_data, width, height, settings.history_limits.get(&HistoryItemType::Screenshot))
         .map_err(|e| e.to_string())?;
 
     // Convert HistoryItem to ScreenshotRecord for backwards compatibility
@@ -688,6 +739,7 @@ async fn start_clipboard_monitoring(app: AppHandle) -> Result<(), String> {
             std::thread::spawn(move || {
                 let state = app.state::<AppState>();
                 let clipboard_settings = state.clipboard_settings.lock().unwrap().clone();
+                let settings = state.settings.lock().unwrap().clone();
 
                 if !clipboard_settings.enabled {
                     return;
@@ -710,7 +762,7 @@ async fn start_clipboard_monitoring(app: AppHandle) -> Result<(), String> {
                         let _ = manager.save_clipboard_text(
                             &text,
                             None, // source_app - could be implemented with Windows API
-                            clipboard_settings.max_items,
+                            settings.history_limits.get(&HistoryItemType::ClipboardText),
                         );
 
                         // Emit event to frontend
@@ -729,7 +781,7 @@ async fn start_clipboard_monitoring(app: AppHandle) -> Result<(), String> {
                                 width as u32,
                                 height as u32,
                                 None,
-                                clipboard_settings.max_items,
+                                settings.history_limits.get(&HistoryItemType::ClipboardImage),
                             );
 
                             // Emit event to frontend
@@ -1630,7 +1682,7 @@ async fn paste_history_item(app: AppHandle, item_id: String) -> Result<(), Strin
                         .map_err(|e| e.to_string())?;
                 }
             }
-            HistoryItemType::ClipboardImage | HistoryItemType::Screenshot => {
+            HistoryItemType::ClipboardImage | HistoryItemType::Screenshot | HistoryItemType::SshUpload => {
                 if let Some(filename) = &item.filename {
                     let history_manager =
                         state.history_manager.lock().map_err(|e| e.to_string())?;
@@ -1693,7 +1745,7 @@ async fn copy_history_item_to_clipboard(app: AppHandle, item_id: String) -> Resu
                         .map_err(|e| e.to_string())?;
                 }
             }
-            HistoryItemType::ClipboardImage | HistoryItemType::Screenshot => {
+            HistoryItemType::ClipboardImage | HistoryItemType::Screenshot | HistoryItemType::SshUpload => {
                 if let Some(filename) = &item.filename {
                     let history_manager =
                         state.history_manager.lock().map_err(|e| e.to_string())?;

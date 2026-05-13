@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Settings, Copy, Monitor, Palette, Upload, Keyboard, Plus, Trash2, Pencil, Check, X, Wifi, Loader2 } from 'lucide-react';
+import { Settings, Copy, Monitor, Palette, Upload, Keyboard, Plus, Trash2, Pencil, Check, X, Wifi, Loader2, Filter } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { THEMES, ThemeName, loadThemeFromStore, saveThemeToStore } from '../utils/theme';
 
@@ -15,10 +15,17 @@ interface SshServer {
     remote_path: string;
 }
 
+interface HistoryLimits {
+    screenshot: number;
+    clipboardText: number;
+    clipboardImage: number;
+    sshUpload: number;
+}
+
 interface AppSettings {
     hotkey: string;
     auto_copy: boolean;
-    max_history: number;
+    history_limits: HistoryLimits;
     max_image_width: number | null;
     ssh_enabled: boolean;
     ssh_servers: SshServer[];
@@ -45,7 +52,12 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     const [appSettings, setAppSettings] = useState<AppSettings>({
         hotkey: 'Ctrl+Shift+S',
         auto_copy: true,
-        max_history: 150,
+        history_limits: {
+            screenshot: 150,
+            clipboardText: 200,
+            clipboardImage: 200,
+            sshUpload: 50,
+        },
         max_image_width: 1568,
         ssh_enabled: false,
         ssh_servers: [],
@@ -269,6 +281,40 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                                         <ShortcutRow label="Double Paste (Last Item)" shortcut="Ctrl+V (Double Tap)" />
                                     </div>
                                     <p className="text-sm text-slate-500 mt-2 ml-1">Shortcuts are currently read-only.</p>
+                                </section>
+
+                                <section>
+                                    <h3 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
+                                        <Filter className="text-orange-400" size={20} /> History Limits
+                                    </h3>
+                                    <div className="space-y-4">
+                                        <div className="bg-slate-800/50 rounded-xl p-4 border border-slate-700/50 space-y-4">
+                                            <LimitSliderRow
+                                                label="Screenshots"
+                                                value={appSettings.history_limits.screenshot}
+                                                onChange={(v) => saveAppSettings({ ...appSettings, history_limits: { ...appSettings.history_limits, screenshot: v } })}
+                                                min={10} max={500} step={10}
+                                            />
+                                            <LimitSliderRow
+                                                label="Clipboard Text"
+                                                value={appSettings.history_limits.clipboardText}
+                                                onChange={(v) => saveAppSettings({ ...appSettings, history_limits: { ...appSettings.history_limits, clipboardText: v } })}
+                                                min={10} max={500} step={10}
+                                            />
+                                            <LimitSliderRow
+                                                label="Clipboard Images"
+                                                value={appSettings.history_limits.clipboardImage}
+                                                onChange={(v) => saveAppSettings({ ...appSettings, history_limits: { ...appSettings.history_limits, clipboardImage: v } })}
+                                                min={10} max={500} step={10}
+                                            />
+                                            <LimitSliderRow
+                                                label="SSH Uploads"
+                                                value={appSettings.history_limits.sshUpload}
+                                                onChange={(v) => saveAppSettings({ ...appSettings, history_limits: { ...appSettings.history_limits, sshUpload: v } })}
+                                                min={10} max={200} step={5}
+                                            />
+                                        </div>
+                                    </div>
                                 </section>
                             </div>
                         )}
@@ -526,6 +572,37 @@ function ShortcutRow({ label, shortcut }: { label: string, shortcut: string }) {
             <kbd className="px-2.5 py-1 bg-slate-900 border border-slate-700 rounded-md text-xs font-mono text-slate-300 shadow-sm">
                 {shortcut}
             </kbd>
+        </div>
+    );
+}
+
+function LimitSliderRow({ label, value, onChange, min, max, step }: {
+    label: string;
+    value: number;
+    onChange: (v: number) => void;
+    min: number;
+    max: number;
+    step: number;
+}) {
+    return (
+        <div className="bg-slate-900/50 rounded-lg p-3">
+            <div className="flex justify-between mb-2">
+                <label className="text-white font-medium text-sm">{label}</label>
+                <span className="text-orange-400 font-mono text-sm">{value}</span>
+            </div>
+            <input
+                type="range"
+                min={min}
+                max={max}
+                step={step}
+                value={value}
+                onChange={(e) => onChange(parseInt(e.target.value))}
+                className="w-full accent-orange-500"
+            />
+            <div className="flex justify-between text-xs text-slate-500 mt-1">
+                <span>{min}</span>
+                <span>{max}</span>
+            </div>
         </div>
     );
 }
