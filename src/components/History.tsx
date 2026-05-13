@@ -374,7 +374,7 @@ export default function History() {
 
   return (
     <div
-      className="flex-1 overflow-hidden w-full flex flex-col relative"
+      className="flex-1 w-full flex flex-col relative"
       style={{
         backgroundColor: theme.canvasBg,
         color: theme.textColor,
