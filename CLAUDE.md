@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Environment note:** This is a Windows desktop app (Tauri). Build and run happen on Windows (PowerShell / `npm run tauri ...`). WSL is used only to edit source files via Claude Code -- do not attempt `cargo` / `npm install` from WSL.
+
 ## Build & Run
 
 ```bash
