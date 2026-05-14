@@ -88,6 +88,7 @@ impl HistoryLimits {
 pub struct AppSettings {
     pub hotkey: String,
     pub auto_copy: bool,
+    #[serde(default)]
     pub history_limits: HistoryLimits,
     pub max_image_width: Option<u32>,
     // SSH Upload settings
@@ -2008,14 +2009,16 @@ pub fn run() {
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyS);
             let app_handle_capture = app.handle().clone();
 
-            app.global_shortcut().on_shortcut(
+            if let Err(error) = app.global_shortcut().on_shortcut(
                 capture_shortcut,
                 move |_app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
                         let _ = open_selection_window(&app_handle_capture);
                     }
                 },
-            )?;
+            ) {
+                eprintln!("Failed to register capture shortcut Ctrl+Shift+S: {error}");
+            }
 
             // NOTE: Removed global Ctrl+P shortcut - it was blocking print in all apps
             // The editor window can handle Ctrl+P locally if needed
@@ -2025,42 +2028,48 @@ pub fn run() {
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyH);
             let app_handle_history = app.handle().clone();
 
-            app.global_shortcut().on_shortcut(
+            if let Err(error) = app.global_shortcut().on_shortcut(
                 history_shortcut,
                 move |_app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
                         let _ = open_history_window(&app_handle_history);
                     }
                 },
-            )?;
+            ) {
+                eprintln!("Failed to register history shortcut Ctrl+Shift+H: {error}");
+            }
 
             // Register global shortcut for color picker (Ctrl+Shift+X)
             let colorpicker_shortcut =
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyX);
             let app_handle_colorpicker = app.handle().clone();
 
-            app.global_shortcut().on_shortcut(
+            if let Err(error) = app.global_shortcut().on_shortcut(
                 colorpicker_shortcut,
                 move |_app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
                         let _ = open_color_picker_window(&app_handle_colorpicker);
                     }
                 },
-            )?;
+            ) {
+                eprintln!("Failed to register color picker shortcut Ctrl+Shift+X: {error}");
+            }
 
             // Register global shortcut for Quick Paste popup (Ctrl+Alt+V)
             let quickpaste_shortcut =
                 Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyV);
             let app_handle_quickpaste = app.handle().clone();
 
-            app.global_shortcut().on_shortcut(
+            if let Err(error) = app.global_shortcut().on_shortcut(
                 quickpaste_shortcut,
                 move |_app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
                         let _ = open_quick_paste_window(&app_handle_quickpaste, Some("history"));
                     }
                 },
-            )?;
+            ) {
+                eprintln!("Failed to register quick paste shortcut Ctrl+Alt+V: {error}");
+            }
 
             // Register global shortcut for Quick Paste snippet manager (Ctrl+Alt+Shift+Q)
             let snippet_shortcut = Shortcut::new(
@@ -2069,14 +2078,16 @@ pub fn run() {
             );
             let app_handle_snippet = app.handle().clone();
 
-            app.global_shortcut().on_shortcut(
+            if let Err(error) = app.global_shortcut().on_shortcut(
                 snippet_shortcut,
                 move |_app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
                         let _ = open_quick_paste_window(&app_handle_snippet, Some("snippets"));
                     }
                 },
-            )?;
+            ) {
+                eprintln!("Failed to register snippet manager shortcut Ctrl+Alt+Shift+Q: {error}");
+            }
 
             // Start keyboard hook for Ctrl+V double-tap detection
             let app_handle_paste = app.handle().clone();

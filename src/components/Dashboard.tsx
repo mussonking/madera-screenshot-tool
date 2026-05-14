@@ -50,7 +50,7 @@ export default function Dashboard() {
 
   return (
     <div
-      className="h-screen w-full flex flex-col overflow-hidden"
+      className="h-screen w-full flex flex-col overflow-hidden min-h-0"
       style={{
         backgroundColor: theme.canvasBg,
         color: theme.textColor,

@@ -536,7 +536,7 @@ const QuickPasteModal = () => {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 min-h-0 overflow-y-auto">
         {loading ? (
           <div className="flex items-center justify-center h-full"><span style={{ color: theme.textColor, opacity: 0.5 }}>Loading...</span></div>
         ) : activeTab === "snippets" ? (

@@ -379,7 +379,7 @@ export default function History() {
 
   return (
     <div
-      className="flex-1 w-full flex flex-col relative"
+      className="flex-1 min-h-0 w-full flex flex-col relative"
       style={{
         backgroundColor: theme.canvasBg,
         color: theme.textColor,
@@ -387,7 +387,7 @@ export default function History() {
       }}
     >
       {/* Main Content */}
-      <div className="flex-1 overflow-y-auto w-full p-6 space-y-8">
+      <div className="flex-1 min-h-0 overflow-y-auto w-full p-6 space-y-8">
         {/* Recent Activity Section */}
         <div>
           {/* History Header */}
