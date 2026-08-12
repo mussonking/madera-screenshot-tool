@@ -1057,6 +1057,7 @@ fn open_editor_window(
 
 fn open_main_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(window) = app.get_webview_window("main") {
+        window.show()?;
         window.set_focus()?;
         return Ok(());
     }
@@ -1073,46 +1074,42 @@ fn open_main_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn open_history_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(window) = app.get_webview_window("history") {
+/// Open (or focus) the single main window on a given section:
+/// "capture", "history", "snippets" or "settings".
+fn show_main_window_tab(app: &AppHandle, tab: &str) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(window) = app.get_webview_window("main") {
+        window.show()?;
         window.set_focus()?;
+        window.emit("app-navigate", tab)?;
         return Ok(());
     }
 
-    let window =
-        WebviewWindowBuilder::new(app, "history", WebviewUrl::App("index.html#history".into()))
-            .title("Madera.SS - History")
-            .inner_size(1200.0, 800.0)
-            .center()
-            .resizable(true)
-            .decorations(true)
-            .build()?;
+    let url = format!("index.html#/{}", tab);
+    let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App(url.into()))
+        .title("Madera.SS")
+        .inner_size(1200.0, 800.0)
+        .center()
+        .resizable(true)
+        .decorations(true)
+        .build()?;
 
     window.set_focus()?;
     Ok(())
 }
 
-fn open_settings_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
-    if let Some(window) = app.get_webview_window("settings") {
-        window.set_focus()?;
+/// Tray left-click: show the main window, or hide it if it is already the focused window.
+fn toggle_main_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(window) = app.get_webview_window("main") {
+        let focused = window.is_focused().unwrap_or(false);
+        if window.is_visible()? && focused {
+            window.hide()?;
+        } else {
+            window.show()?;
+            window.set_focus()?;
+        }
         return Ok(());
     }
-
-    let window = WebviewWindowBuilder::new(
-        app,
-        "settings",
-        WebviewUrl::App("index.html#settings".into()),
-    )
-    .title("Settings")
-    .inner_size(900.0, 700.0)
-    .min_inner_size(700.0, 500.0)
-    .center()
-    .resizable(true)
-    .decorations(true)
-    .build()?;
-
-    window.set_focus()?;
-    Ok(())
+    open_main_window(app)
 }
 
 fn open_color_picker_window(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
@@ -1338,12 +1335,12 @@ async fn trigger_capture(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 async fn open_history_panel(app: AppHandle) -> Result<(), String> {
-    open_history_window(&app).map_err(|e| e.to_string())
+    show_main_window_tab(&app, "history").map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 async fn open_settings_panel(app: AppHandle) -> Result<(), String> {
-    open_settings_window(&app).map_err(|e| e.to_string())
+    show_main_window_tab(&app, "settings").map_err(|e| e.to_string())
 }
 
 #[allow(dead_code)]
@@ -1817,7 +1814,7 @@ pub fn run() {
                     let _ = open_selection_window(app);
                 }
                 Some("history") => {
-                    let _ = open_history_window(app);
+                    let _ = show_main_window_tab(app, "history");
                 }
                 Some("colorpicker") => {
                     let _ = open_color_picker_window(app);
@@ -1856,6 +1853,32 @@ pub fn run() {
         })
         .setup(|app| {
             platform::start_focus_tracker();
+
+            // The main window hides to the tray instead of closing, so it is always
+            // one tray click away. Real exit only happens via Tray > Quit.
+            if let Some(main_window) = app.get_webview_window("main") {
+                let handle_for_close = app.handle().clone();
+                let win_for_close = main_window.clone();
+                main_window.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        let state = handle_for_close.state::<AppState>();
+                        let should_exit =
+                            state.should_exit.lock().map(|s| *s).unwrap_or(false);
+                        if !should_exit {
+                            api.prevent_close();
+                            let _ = win_for_close.hide();
+                        }
+                    }
+                });
+            }
+
+            // When auto-started at login, start hidden in the tray instead of
+            // popping the main window in the user's face.
+            if std::env::args().any(|a| a == "--minimized") {
+                if let Some(main_window) = app.get_webview_window("main") {
+                    let _ = main_window.hide();
+                }
+            }
 
             // Check if autostart is enabled to show correct menu state
             let autostart_enabled = {
@@ -1918,7 +1941,8 @@ pub fn run() {
                 autostart_enabled,
                 None::<&str>,
             )?;
-            let dashboard = MenuItem::with_id(app, "dashboard", "Dashboard", true, None::<&str>)?;
+            let dashboard =
+                MenuItem::with_id(app, "dashboard", "Open Madera.SS", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
                 &[
@@ -1934,9 +1958,10 @@ pub fn run() {
                 ],
             )?;
 
-            // Load icon
+            // Load tray icon: dedicated asset where the glyph fills the canvas
+            // (the app icon is mostly transparent padding and looks tiny in the tray)
             let icon =
-                Image::from_bytes(include_bytes!("../icons/icon.png")).unwrap_or_else(|_| {
+                Image::from_bytes(include_bytes!("../icons/tray.png")).unwrap_or_else(|_| {
                     Image::from_bytes(include_bytes!("../icons/32x32.png")).unwrap()
                 });
 
@@ -1955,7 +1980,7 @@ pub fn run() {
                         app.exit(0);
                     }
                     "dashboard" => {
-                        let _ = open_main_window(app);
+                        let _ = show_main_window_tab(app, "capture");
                     }
                     "capture" => {
                         let _ = open_selection_window(app);
@@ -1964,10 +1989,10 @@ pub fn run() {
                         let _ = open_color_picker_window(app);
                     }
                     "history" => {
-                        let _ = open_history_window(app);
+                        let _ = show_main_window_tab(app, "history");
                     }
                     "settings_panel" => {
-                        let _ = open_settings_window(app);
+                        let _ = show_main_window_tab(app, "settings");
                     }
                     "autostart" => {
                         use tauri_plugin_autostart::ManagerExt;
@@ -1992,14 +2017,14 @@ pub fn run() {
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
-                    // Handle left click on tray icon - open History panel
+                    // Left click on tray icon = show/hide the main window (one-click way home)
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
                         button_state: MouseButtonState::Up,
                         ..
                     } = event
                     {
-                        let _ = open_history_window(tray.app_handle());
+                        let _ = toggle_main_window(tray.app_handle());
                     }
                 })
                 .build(app)?;
@@ -2032,7 +2057,7 @@ pub fn run() {
                 history_shortcut,
                 move |_app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
-                        let _ = open_history_window(&app_handle_history);
+                        let _ = show_main_window_tab(&app_handle_history, "history");
                     }
                 },
             ) {
@@ -2176,7 +2201,7 @@ pub fn run() {
                 let h = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(500));
-                    let _ = open_history_window(&h);
+                    let _ = show_main_window_tab(&h, "history");
                 });
             } else if cli_args.iter().any(|a| a == "--colorpicker") {
                 let h = app.handle().clone();
