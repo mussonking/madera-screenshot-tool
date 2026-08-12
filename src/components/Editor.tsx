@@ -560,8 +560,10 @@ export default function Editor() {
       const circle = new fabric.Circle({
         radius: 15,
         fill: color,
-        left: pointer.x - 15,
-        top: pointer.y - 15,
+        left: pointer.x,
+        top: pointer.y,
+        originX: "center",
+        originY: "center",
       });
       const text = new fabric.FabricText(nextNumber.toString(), {
         left: pointer.x,
@@ -573,10 +575,7 @@ export default function Editor() {
         originX: "center",
         originY: "center",
       });
-      const group = new fabric.Group([circle, text], {
-        left: pointer.x - 15,
-        top: pointer.y - 15,
-      });
+      const group = new fabric.Group([circle, text]);
       canvas.add(group);
       saveState();
     }
@@ -1103,8 +1102,10 @@ export default function Editor() {
     const circle = new fabric.Circle({
       radius: 15,
       fill: color,
-      left: centerX - 15,
-      top: centerY - 15,
+      left: centerX,
+      top: centerY,
+      originX: "center",
+      originY: "center",
     });
     const text = new fabric.FabricText(nextNumber.toString(), {
       left: centerX,
@@ -1116,10 +1117,7 @@ export default function Editor() {
       originX: "center",
       originY: "center",
     });
-    const group = new fabric.Group([circle, text], {
-      left: centerX - 15,
-      top: centerY - 15,
-    });
+    const group = new fabric.Group([circle, text]);
     canvas.add(group);
     canvas.setActiveObject(group);
     saveState();

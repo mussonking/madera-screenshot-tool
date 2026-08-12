@@ -238,22 +238,6 @@ unsafe fn run_selection_window(result_sender: mpsc::Sender<SelectionResult>) {
 
     ReleaseDC(HWND::default(), screen_dc);
 
-    // Initialize state
-    SELECTION_STATE = Some(SelectionState {
-        screenshot_dc: mem_dc,
-        screenshot_bitmap: bitmap,
-        screen_width,
-        screen_height,
-        virtual_x,
-        virtual_y,
-        is_selecting: false,
-        start_x: 0,
-        start_y: 0,
-        current_x: 0,
-        current_y: 0,
-        result_sender: Some(result_sender),
-    });
-
     // Register window class
     let class_name = w!("NativeSelectionOverlay");
     let hmodule = GetModuleHandleW(None).unwrap();
@@ -272,7 +256,7 @@ unsafe fn run_selection_window(result_sender: mpsc::Sender<SelectionResult>) {
     RegisterClassExW(&wc);
 
     // Create fullscreen topmost window covering ALL monitors
-    let hwnd = CreateWindowExW(
+    let hwnd = match CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         class_name,
         w!("Selection"),
@@ -285,8 +269,40 @@ unsafe fn run_selection_window(result_sender: mpsc::Sender<SelectionResult>) {
         None,
         hinstance,
         None,
-    )
-    .unwrap();
+    ) {
+        Ok(hwnd) => hwnd,
+        Err(_) => {
+            let _ = result_sender.send(SelectionResult {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                cancelled: true,
+                image_data: None,
+            });
+            SelectObject(mem_dc, old_bitmap);
+            let _ = DeleteObject(bitmap);
+            let _ = DeleteDC(mem_dc);
+            let _ = UnregisterClassW(class_name, hinstance);
+            return;
+        }
+    };
+
+    // Initialize state
+    SELECTION_STATE = Some(SelectionState {
+        screenshot_dc: mem_dc,
+        screenshot_bitmap: bitmap,
+        screen_width,
+        screen_height,
+        virtual_x,
+        virtual_y,
+        is_selecting: false,
+        start_x: 0,
+        start_y: 0,
+        current_x: 0,
+        current_y: 0,
+        result_sender: Some(result_sender),
+    });
 
     // Show and update
     let _ = ShowWindow(hwnd, SW_SHOW);
